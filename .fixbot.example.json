@@ -1,0 +1,33 @@
+{
+  "defaultBase": "main",
+  "botName": "fixbot",
+  "workspaceRoot": ".workspaces",
+  "agent": {
+    "command": "omp",
+    "args": [
+      "exec",
+      "--prompt-file",
+      "{prompt}"
+    ],
+    "timeoutSeconds": 2700
+  },
+  "policy": {
+    "requireHumanReview": true,
+    "allowLiveServices": false,
+    "allowPush": false,
+    "maxChangedFiles": 20,
+    "maxDiffLines": 1200,
+    "blockedPaths": [
+      ".github/workflows/**",
+      "scripts/release/**",
+      "**/.env*"
+    ],
+    "allowedCommands": [
+      "pnpm test",
+      "pnpm typecheck",
+      "pnpm build",
+      "bun test",
+      "npm test"
+    ]
+  }
+}

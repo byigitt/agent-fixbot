@@ -1,0 +1,21 @@
+{
+  "name": "agent-fixbot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.30.3",
+  "bin": {
+    "agent-fixbot": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm build && node --test \"dist/**/*.test.js\"",
+    "doctor": "node dist/cli.js doctor",
+    "smoke": "node dist/cli.js prepare openclaw/openclaw#1 --dry-run"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.0",
+    "typescript": "^5.9.3"
+  }
+}
