@@ -1,6 +1,7 @@
 export type AgentRunInput = {
   cwd: string;
   promptFile: string;
+  onSpawn?: (pid: number) => void | Promise<void>;
 };
 
 export type AgentRunResult = {

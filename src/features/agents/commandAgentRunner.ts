@@ -10,7 +10,8 @@ export class CommandAgentRunner implements AgentRunner {
     const result = await execFile(this.config.command, args, {
       cwd: input.cwd,
       env: stripMutationSecrets(process.env),
-      timeoutSeconds: this.config.timeoutSeconds
+      timeoutSeconds: this.config.timeoutSeconds,
+      onSpawn: input.onSpawn
     });
     return { exitCode: result.exitCode, command: result.command, stdout: result.stdout, stderr: result.stderr };
   }

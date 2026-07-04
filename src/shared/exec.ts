@@ -6,11 +6,12 @@ export type ExecOptions = {
   env?: NodeJS.ProcessEnv;
   timeoutSeconds?: number;
   stdin?: string;
+  onSpawn?: ((pid: number) => void | Promise<void>) | undefined;
 };
 
 export async function execFile(command: string, args: string[], options: ExecOptions): Promise<ShellResult> {
   const rendered = [command, ...args].join(' ');
-  return new Promise((resolve) => {
+  return await new Promise<ShellResult>((resolve) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.env ?? process.env,
@@ -21,28 +22,32 @@ export async function execFile(command: string, args: string[], options: ExecOpt
     let settled = false;
     const timeout = options.timeoutSeconds
       ? setTimeout(() => {
-          if (settled) return;
-          settled = true;
           child.kill('SIGTERM');
-          resolve({ command: rendered, cwd: options.cwd, exitCode: 124, stdout, stderr: stderr + '\nTimed out' });
+          settle({ command: rendered, cwd: options.cwd, exitCode: 124, stdout, stderr: stderr + '\nTimed out' });
         }, options.timeoutSeconds * 1000)
       : undefined;
+    const settle = (result: ShellResult): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(result);
+    };
 
+    if (child.pid !== undefined) {
+      Promise.resolve(options.onSpawn?.(child.pid)).catch((error: unknown) => {
+        child.kill('SIGTERM');
+        settle({ command: rendered, cwd: options.cwd, exitCode: 127, stdout, stderr: stderr + (error instanceof Error ? error.message : String(error)) });
+      });
+    }
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk) => { stdout += chunk; });
     child.stderr.on('data', (chunk) => { stderr += chunk; });
     child.on('error', (error) => {
-      if (settled) return;
-      settled = true;
-      if (timeout) clearTimeout(timeout);
-      resolve({ command: rendered, cwd: options.cwd, exitCode: 127, stdout, stderr: stderr + error.message });
+      settle({ command: rendered, cwd: options.cwd, exitCode: 127, stdout, stderr: stderr + error.message });
     });
     child.on('close', (code) => {
-      if (settled) return;
-      settled = true;
-      if (timeout) clearTimeout(timeout);
-      resolve({ command: rendered, cwd: options.cwd, exitCode: code ?? 1, stdout, stderr });
+      settle({ command: rendered, cwd: options.cwd, exitCode: code ?? 1, stdout, stderr });
     });
     if (options.stdin) child.stdin.end(options.stdin);
     else child.stdin.end();

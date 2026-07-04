@@ -4,6 +4,17 @@ export type AgentConfig = {
   timeoutSeconds: number;
 };
 
+export type AutoLabelRule = {
+  label: string;
+  keywords: string[];
+};
+
+export type AutoLabelConfig = {
+  enabled: boolean;
+  defaultLabels: string[];
+  rules: AutoLabelRule[];
+};
+
 export type PolicyConfig = {
   requireHumanReview: boolean;
   allowLiveServices: boolean;
@@ -12,6 +23,10 @@ export type PolicyConfig = {
   maxDiffLines: number;
   blockedPaths: string[];
   allowedCommands: string[];
+  requireTestEvidence: boolean;
+  requireChangelog: boolean;
+  requireLiveServiceEvidence: boolean;
+  statusLabels: Partial<Record<string, string>>;
 };
 
 export type FixbotConfig = {
@@ -19,6 +34,7 @@ export type FixbotConfig = {
   botName: string;
   workspaceRoot: string;
   agent: AgentConfig;
+  autoLabel: AutoLabelConfig;
   policy: PolicyConfig;
 };
 
@@ -31,6 +47,16 @@ export const defaultConfig: FixbotConfig = {
     args: ['exec', '--prompt-file', '{prompt}'],
     timeoutSeconds: 2700
   },
+  autoLabel: {
+    enabled: true,
+    defaultLabels: [],
+    rules: [
+      { label: 'bug', keywords: ['bug', 'crash', 'error', 'exception', 'regression', 'broken', 'fail'] },
+      { label: 'documentation', keywords: ['docs', 'documentation', 'readme'] },
+      { label: 'enhancement', keywords: ['feature', 'enhancement', 'improve', 'request'] },
+      { label: 'question', keywords: ['question', 'how do i', 'how to', 'help'] }
+    ]
+  },
   policy: {
     requireHumanReview: true,
     allowLiveServices: false,
@@ -38,6 +64,19 @@ export const defaultConfig: FixbotConfig = {
     maxChangedFiles: 20,
     maxDiffLines: 1200,
     blockedPaths: ['.github/workflows/**', 'scripts/release/**', '**/.env*'],
-    allowedCommands: ['pnpm test', 'pnpm typecheck', 'pnpm build', 'bun test', 'npm test']
+    allowedCommands: ['pnpm test', 'pnpm typecheck', 'pnpm build', 'bun test', 'npm test'],
+    requireTestEvidence: false,
+    requireChangelog: false,
+    requireLiveServiceEvidence: false,
+    statusLabels: {
+      started: 'fixbot:running',
+      blocked: 'fixbot:blocked',
+      reproduced: 'fixbot:reproduced',
+      'no-repro': 'fixbot:no-repro',
+      'pr-opened': 'fixbot:pr-opened',
+      'review-addressed': 'fixbot:review-addressed',
+      triaged: 'triaged',
+      reviewed: 'reviewed'
+    }
   }
 };

@@ -11,7 +11,7 @@ function event(body: string, overrides: Partial<CommentEvent> = {}): CommentEven
   };
 }
 
-const routedTo = (command: 'fix' | 'fix-ci' | 'address-review' | 'stop'): RoutedCommand => ({
+const routedTo = (command: 'fix' | 'fix-ci' | 'address-review' | 'stop' | 'triage' | 'review'): RoutedCommand => ({
   command,
   ref: { repo: 'acme/widgets', number: 12 },
   actor: 'alice'
@@ -33,6 +33,14 @@ const cases: Array<{ name: string; event: CommentEvent; botName: string; expecte
   { name: 'lookalike bot mention routes nothing', event: event('@fixbotty please fix'), botName: 'fixbot', expected: undefined },
   { name: 'command substring routes nothing', event: event('@fixbot prefix looks wrong'), botName: 'fixbot', expected: undefined },
   { name: 'bot mention suffix routes nothing', event: event('@repair-bot-extra fix'), botName: 'repair-bot', expected: undefined },
+  { name: 'routes triage', event: event('@fixbot triage this crash'), botName: 'fixbot', expected: routedTo('triage') },
+  { name: 'routes review', event: event('@fixbot review this change'), botName: 'fixbot', expected: routedTo('review') },
+  { name: 'review command is case-insensitive', event: event('@FixBot REVIEW'), botName: 'fixbot', expected: routedTo('review') },
+  { name: 'address review outranks plain review', event: event('@fixbot please address review notes'), botName: 'fixbot', expected: routedTo('address-review') },
+  { name: 'stop outranks review', event: event('@fixbot stop the review'), botName: 'fixbot', expected: routedTo('stop') },
+  { name: 'review substring (prefix) routes nothing', event: event('@fixbot previews are broken'), botName: 'fixbot', expected: undefined },
+  { name: 'review substring (suffix) routes nothing', event: event('@fixbot reviewed and approved'), botName: 'fixbot', expected: undefined },
+  { name: 'triage substring routes nothing', event: event('@fixbot triaged this yesterday'), botName: 'fixbot', expected: undefined },
 ];
 
 for (const row of cases) {

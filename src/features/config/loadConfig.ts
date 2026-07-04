@@ -7,7 +7,8 @@ function mergeConfig(base: FixbotConfig, override: Partial<FixbotConfig>): Fixbo
     ...base,
     ...override,
     agent: { ...base.agent, ...override.agent },
-    policy: { ...base.policy, ...override.policy }
+    autoLabel: { ...base.autoLabel, ...override.autoLabel, rules: override.autoLabel?.rules ?? base.autoLabel.rules, defaultLabels: override.autoLabel?.defaultLabels ?? base.autoLabel.defaultLabels },
+    policy: { ...base.policy, ...override.policy, statusLabels: { ...base.policy.statusLabels, ...override.policy?.statusLabels } }
   };
 }
 

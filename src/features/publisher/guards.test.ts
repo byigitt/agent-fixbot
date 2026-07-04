@@ -16,6 +16,10 @@ function policy(overrides: Partial<PolicyConfig> = {}): PolicyConfig {
     maxDiffLines: 100,
     blockedPaths: [],
     allowedCommands: [],
+    requireTestEvidence: false,
+    requireChangelog: false,
+    requireLiveServiceEvidence: false,
+    statusLabels: {},
     ...overrides
   };
 }
