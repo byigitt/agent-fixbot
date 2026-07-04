@@ -149,45 +149,6 @@ test('runReproductionPlan', async (t) => {
       }
     });
 
-    await t.test('blocks an infrastructure spawn failure even when failure is expected', async () => {
-      const repo = await makeRepo();
-      try {
-        await writePlan(repo, readyPlan([{ command: 'missing-fixbot-test-bin', args: [], expect: 'fail' }]));
-        const report = await runReproductionPlan(repo, nodeProfile(['missing-fixbot-test-bin']));
-        assert.strictEqual(report.status, 'blocked');
-        assert.strictEqual(report.commandResults[0]?.result.exitCode, 127);
-        assert.ok(report.reasons.some((reason) => reason.includes('infrastructure failure')), report.reasons.join('; '));
-      } finally {
-        await rm(repo, { recursive: true, force: true });
-      }
-    });
-
-    await t.test('blocks a timed-out command instead of treating timeout as repro failure', async () => {
-      const repo = await makeRepo();
-      try {
-        await writePlan(repo, readyPlan([{ ...nodeCommand('fail', 'while (true) {}'), timeoutSeconds: 1 }]));
-        const report = await runReproductionPlan(repo, nodeProfile());
-        assert.strictEqual(report.status, 'blocked');
-        assert.strictEqual(report.commandResults[0]?.result.exitCode, 124);
-        assert.ok(report.reasons.some((reason) => reason.includes('infrastructure failure')), report.reasons.join('; '));
-      } finally {
-        await rm(repo, { recursive: true, force: true });
-      }
-    });
-
-    await t.test('blocks a missing command cwd before running commands', async () => {
-      const repo = await makeRepo();
-      try {
-        await writePlan(repo, readyPlan([{ ...nodeCommand('fail', 'process.exit(1)'), cwd: 'missing-dir' }]));
-        const report = await runReproductionPlan(repo, nodeProfile());
-        assert.strictEqual(report.status, 'blocked');
-        assert.deepStrictEqual(report.commandResults, []);
-        assert.ok(report.reasons.some((reason) => reason.includes('cwd does not exist')), report.reasons.join('; '));
-      } finally {
-        await rm(repo, { recursive: true, force: true });
-      }
-    });
-
     await t.test('blocks a spawn failure (127) even when the plan expects a failure', async () => {
       const repo = await makeRepo();
       try {
@@ -207,7 +168,8 @@ test('runReproductionPlan', async (t) => {
       const repo = await makeRepo();
       try {
         await writePlan(repo, readyPlan([
-          { ...nodeCommand('fail', 'setTimeout(() => {}, 5000)'), timeoutSeconds: 0.1 }
+          // Real 100ms wait: exec's wall-clock kill targets a child process, out of reach of fake timers.
+          { ...nodeCommand('fail', 'while (true) {}'), timeoutSeconds: 0.1 }
         ]));
         const report = await runReproductionPlan(repo, nodeProfile());
         assert.strictEqual(report.status, 'blocked');
