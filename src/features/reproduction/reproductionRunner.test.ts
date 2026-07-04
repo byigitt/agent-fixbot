@@ -195,6 +195,21 @@ test('runReproductionPlan', async (t) => {
       }
     });
 
+    await t.test('blocks a command cwd that escapes the workspace', async () => {
+      const repo = await makeRepo();
+      try {
+        await writePlan(repo, readyPlan([
+          { ...nodeCommand('pass', 'process.exit(0)'), cwd: '../outside' }
+        ]));
+        const report = await runReproductionPlan(repo, nodeProfile());
+        assert.strictEqual(report.status, 'blocked');
+        assert.deepStrictEqual(report.commandResults, []);
+        assert.ok(report.reasons.some((reason) => reason.includes('outside the workspace')), report.reasons.join('; '));
+      } finally {
+        await rm(repo, { recursive: true, force: true });
+      }
+    });
+
     await t.test('does not reproduce when the expected failure passes', async () => {
       const repo = await makeRepo();
       try {

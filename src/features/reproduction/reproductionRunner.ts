@@ -75,7 +75,14 @@ export async function runReproductionPlan(workspace: string, profile: ProjectPro
       reasons.push(`Command executable is not allowed by project profile: ${command.command}`);
       continue;
     }
-    const commandCwd = command.cwd ? resolveInside(workspace, command.cwd) : workspace;
+    let commandCwd: string;
+    try {
+      commandCwd = command.cwd ? resolveInside(workspace, command.cwd) : workspace;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reasons.push(`Command cwd is outside the workspace: ${message}`);
+      continue;
+    }
     if (command.cwd && !(await pathExists(commandCwd))) {
       reasons.push(`Command cwd does not exist: ${command.cwd}`);
       continue;
