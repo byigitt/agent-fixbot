@@ -15,6 +15,16 @@ export type AutoLabelConfig = {
   rules: AutoLabelRule[];
 };
 
+export type AutoDispatchMode = 'triage' | 'reproduce' | 'fix';
+
+export type AutoDispatchConfig = {
+  enabled: boolean;
+  mode: AutoDispatchMode;
+  maxPerPoll: number;
+  skipWhenLabels: string[];
+  requireLabels: string[];
+};
+
 export type PolicyConfig = {
   requireHumanReview: boolean;
   allowLiveServices: boolean;
@@ -35,6 +45,7 @@ export type FixbotConfig = {
   workspaceRoot: string;
   agent: AgentConfig;
   autoLabel: AutoLabelConfig;
+  autoDispatch: AutoDispatchConfig;
   policy: PolicyConfig;
 };
 
@@ -56,6 +67,13 @@ export const defaultConfig: FixbotConfig = {
       { label: 'enhancement', keywords: ['feature', 'enhancement', 'improve', 'request'] },
       { label: 'question', keywords: ['question', 'how do i', 'how to', 'help'] }
     ]
+  },
+  autoDispatch: {
+    enabled: false,
+    mode: 'triage',
+    maxPerPoll: 1,
+    skipWhenLabels: ['triaged'],
+    requireLabels: []
   },
   policy: {
     requireHumanReview: true,

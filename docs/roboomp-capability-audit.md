@@ -36,6 +36,7 @@ Güncel sonuç: bu repo artık Roboomp benzeri normal-user runner paritesinin b�
 | Semantic scope guard | `#4503` scope creep/stub uyarıları. | Review prompt'u scope/stub/no-op ister; `.fixbot/evidence.json` içinde `scope.status:"failed"` publish'i bloklar. Otomatik static semantic diff hâlâ sınırlı. | **Kısmi** |
 | GitHub secret izolasyonu | Host sınırlarını açık söylüyor. | Agent env'inden `GITHUB_TOKEN`, `GH_TOKEN`, `NPM_TOKEN`, `NODE_AUTH_TOKEN` temizlenir. | **Var** |
 | Issue açılınca otomatik label | Yeni issue'yu görüp label'lama isteği. | `poll-issues <repo>` open issue listesini okur, PR kayıtlarını filtreler, `autoLabel.rules` ile eksik semantic label'ları ekler; dry-run mutasyon/state yazmaz. | **Var** |
+| Issue açılınca otomatik agent dispatch | `#4541` “Looking into this” → repro → PR lifecycle. | `autoDispatch` opt-in açılırsa `poll-issues` mevcut `triage`/`reproduce`/`fix` modlarından birini per-issue lock, `maxPerPoll`, `skipWhenLabels`, `requireLabels` ile başlatır; started status marker/upsert ile idempotenttir, human wording agent artifact'ine yönlendirilir. | **Kısmi** |
 | Issue triage | `#4385`, `#3341`, `#4505`, `#4506` | `triage <ref>` `.fixbot/triage.md` üretir; comment/status/label publish eder. | **Var** |
 | Maintainer decision gate | Maintainer kararları ayrılır. | Triage prompt'u maintainer decisions ister; label/approval otomasyonu sınırlı. | **Kısmi** |
 | Contributor PR review | `#4503`, `#4413`, `#4498`, `#2735` | `review <pull>` read-only `.fixbot/review.md` üretir; PR diff/reviews/comments/checks context'i vardır. | **Var** |
@@ -71,13 +72,14 @@ Kod referansları:
 2. **Review thread resolve yetki sınırı:** Normal kullanıcı yetkisi varsa GraphQL mutation çalışır; GitHub UI'da resolve edilemeyen durumlarda bot bunu host sınırı olarak raporlamalı.
 3. **Priority/domain label inference:** Keyword tabanlı `autoLabel.rules` var; `review:p1/p2/p3` veya provider/domain label çıkarımı hâlâ sınırlı.
 4. **Semantic scope otomasyonu:** Evidence contract ve review prompt'u var; statik olarak unrelated subsystem tespiti hâlâ ajan kalitesine bağlı.
-5. **Daemon packaging:** `poll-issues` ve `poll-comments` tek pass; gerçek daemon/cron/systemd/launchd packaging deploy kararına bağlı.
+5. **Daemon packaging:** `poll-issues` ve `poll-comments` tek pass; gerçek daemon/cron/systemd/launchd packaging deploy kararına bağlı. Auto-dispatch varsayılan kapalıdır; üretimde repo başına dikkatli enable edilmeli.
 
 ## Güvence kriteri
 
 Normal-user Roboomp paritesi için minimum acceptance:
 
 - `poll-issues` recent open issues okur, PR kayıtlarını filtreler, configured semantic label'ları dry-run güvenliğiyle uygular.
+- `autoDispatch` açıkken `poll-issues` mevcut modlardan birini per-issue lock ve maxPerPoll sınırıyla başlatır.
 - `poll-comments` recent comments okur, `@bot` komutlarını dispatch eder, state'i güvenli yönetir.
 - `@bot fix` issue'dan PR açar veya existing bot PR'a devam eder.
 - `@bot address review` PR review comments/thread context'iyle aynı PR'a commit atar.

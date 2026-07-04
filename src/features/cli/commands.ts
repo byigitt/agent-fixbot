@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { loadConfig } from '../config/loadConfig.js';
-import type { AutoLabelConfig } from '../config/config.js';
+import type { AutoDispatchConfig, AutoLabelConfig } from '../config/config.js';
 import { parseIssueRef, type IssueRef } from '../github/ref.js';
 import { GhCliClient } from '../github/ghClient.js';
 import { FixtureGitHubClient } from '../github/fixtureClient.js';
@@ -113,6 +113,18 @@ function labelsForIssue(issue: RecentIssue, config: AutoLabelConfig): string[] {
   return Array.from(new Set(labels)).filter((label) => !existing.has(label));
 }
 
+function shouldAutoDispatch(issue: RecentIssue, plannedLabels: string[], config: AutoDispatchConfig): boolean {
+  if (!config.enabled) return false;
+  const labels = new Set([...issue.labels.map((label) => label.name), ...plannedLabels]);
+  if (config.skipWhenLabels.some((label) => labels.has(label))) return false;
+  if (config.requireLabels.length > 0 && !config.requireLabels.some((label) => labels.has(label))) return false;
+  return true;
+}
+
+function autoDispatchStartSummary(mode: AutoDispatchConfig['mode']): string {
+  return `Started auto-dispatched ${mode} job.`;
+}
+
 async function pollIssues(parsed: ParsedArgs, cwd: string): Promise<string> {
   const repo = parsed.positional[0];
   if (!repo) throw new Error(`Missing repo for poll-issues.\n\n${helpText}`);
@@ -125,16 +137,32 @@ async function pollIssues(parsed: ParsedArgs, cwd: string): Promise<string> {
   const issues = await github.listRecentIssues(repo, since);
   const outputs: string[] = [];
   let newest = since;
+  let dispatched = 0;
   for (const issue of issues) {
     const timestamp = issue.updatedAt ?? issue.createdAt;
     if (timestamp && (!newest || Date.parse(timestamp) > Date.parse(newest))) newest = timestamp;
     const labels = labelsForIssue(issue, config.autoLabel);
-    if (labels.length === 0) continue;
-    if (!dryRun) await github.addLabels(repo, issue.number, labels);
-    outputs.push(`${dryRun ? 'Would label' : 'Labeled'} ${repo}#${issue.number}: ${labels.join(', ')}`);
+    if (labels.length > 0) {
+      if (!dryRun) await github.addLabels(repo, issue.number, labels);
+      outputs.push(`${dryRun ? 'Would label' : 'Labeled'} ${repo}#${issue.number}: ${labels.join(', ')}`);
+    }
+    if (dispatched < config.autoDispatch.maxPerPoll && shouldAutoDispatch(issue, labels, config.autoDispatch)) {
+      dispatched += 1;
+      const ref = `${repo}#${issue.number}`;
+      if (dryRun) {
+        outputs.push(`Would auto-dispatch ${config.autoDispatch.mode} for ${ref}`);
+      } else {
+        const output = await runCommand({
+          command: config.autoDispatch.mode,
+          positional: [ref],
+          flags: { 'start-summary': autoDispatchStartSummary(config.autoDispatch.mode), 'auto-dispatched': true }
+        }, cwd);
+        outputs.push(`Auto-dispatched ${config.autoDispatch.mode} for ${ref}\n${output.trimEnd()}`);
+      }
+    }
   }
   if (newest && !dryRun) await writeJson(stateFile, { since: newest });
-  return outputs.length > 0 ? outputs.join('\n') + '\n' : 'No issues labeled.\n';
+  return outputs.length > 0 ? outputs.join('\n') + '\n' : 'No issues labeled or dispatched.\n';
 }
 
 async function dispatchRoutedCommand(routed: NonNullable<RoutedCommand>, cwd: string, dryRun: boolean): Promise<string> {
@@ -182,6 +210,8 @@ async function runFixLike(input: RunContext): Promise<string> {
   const ref = input.parsed.positional[0];
   if (!ref) throw new Error(`Missing issue ref.\n\n${helpText}`);
   const dryRun = flagBool(input.parsed.flags, 'dry-run');
+  const startSummary = flagString(input.parsed.flags, 'start-summary');
+  const autoDispatched = flagBool(input.parsed.flags, 'auto-dispatched');
   const parsedRef = parseIssueRef(ref);
   const config = await loadConfig(input.cwd);
   const github: GitHubClient = dryRun ? new FixtureGitHubClient() : new GhCliClient(input.cwd);
@@ -189,7 +219,7 @@ async function runFixLike(input: RunContext): Promise<string> {
   const base = flagString(input.parsed.flags, 'base');
   const foundExisting = await github.findOpenBotPrForIssue(parsedRef.repo, parsedRef.number, config.botName);
   const existingPullRequest = existingForMode(input.mode, issue, foundExisting);
-  const jobInput = { issue, config, mode: input.mode, ...(base ? { base } : {}), ...(existingPullRequest?.headRefName ? { branch: existingPullRequest.headRefName } : {}), ...(existingPullRequest ? { existingPullRequest } : {}) };
+  const jobInput = { issue, config, mode: input.mode, ...(base ? { base } : {}), ...(existingPullRequest?.headRefName ? { branch: existingPullRequest.headRefName } : {}), ...(existingPullRequest ? { existingPullRequest } : {}), ...(autoDispatched ? { autoDispatched: true } : {}) };
   const job = createRepairJob(jobInput);
   const lock = await acquireJobLock(input.cwd, job.repo, job.issueNumber, job.id);
   if (!lock) return `Job already running for ${job.repo}#${job.issueNumber}.\n`;
@@ -202,7 +232,7 @@ async function runFixLike(input: RunContext): Promise<string> {
     const prompt = renderRepairPrompt(job, profile);
     const files = await writeJobFiles(workspace.workspace, job, prompt);
     if (input.mode === 'prepare') return [`Prepared job ${job.id}`, `Workspace: ${workspace.workspace}`, `Job: ${files.jobFile}`, `Prompt: ${files.promptFile}`].join('\n') + '\n';
-    await postStatusComment(github, { repo: job.repo, number: job.issueNumber, status: 'started', summary: `Started ${input.mode} job ${job.id}.`, ...statusLabelInput(config, 'started'), dryRun });
+    await postStatusComment(github, { repo: job.repo, number: job.issueNumber, status: 'started', summary: startSummary ?? `Started ${input.mode} job ${job.id}.`, ...statusLabelInput(config, 'started'), dryRun });
     const runner = dryRun ? new NoopAgentRunner() : new CommandAgentRunner(config.agent);
     const run = await runner.run({
       cwd: workspace.workspace,

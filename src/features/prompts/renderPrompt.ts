@@ -135,6 +135,14 @@ function resultHeadings(job: RepairJob): string[] {
   }
 }
 
+function autoDispatchGuidance(job: RepairJob): string | undefined {
+  if (!job.autoDispatched) return undefined;
+  if (job.mode === 'reproduce') return 'This job was auto-dispatched from a newly observed issue. In the output artifact, open with a short human status line that says you are looking into it and will report back with a focused repro before any fix.';
+  if (job.mode === 'fix') return 'This job was auto-dispatched from a newly observed issue. In the output artifact, open with a short human status line that says you are looking into it, will start with a focused repro, and then will report the fix.';
+  if (job.mode === 'triage') return 'This job was auto-dispatched from a newly observed issue. In the output artifact, open with a short human status line that says you are looking into it and will report back with focused triage.';
+  return undefined;
+}
+
 export function renderRepairPrompt(job: RepairJob, profile?: ProjectProfile): string {
   return [
     '# Agent Fix Job',
@@ -162,6 +170,7 @@ export function renderRepairPrompt(job: RepairJob, profile?: ProjectProfile): st
     '- Run the narrowest relevant test first, then the adjacent suite when practical.',
     '- If complete verification is blocked, state exactly what is missing.',
     `- Live external services allowed: ${job.config.policy.allowLiveServices ? 'yes' : 'no'}.`,
+    autoDispatchGuidance(job),
     '',
     externalReproPolicy.trimEnd(),
     '',

@@ -7,7 +7,7 @@ import { publishRepair } from './publisher.js';
 import { git } from '../../shared/git.js';
 import type { GitHubClient } from '../github/githubClient.js';
 import type { RepairJob } from '../jobs/job.js';
-import type { AutoLabelConfig, PolicyConfig } from '../config/config.js';
+import type { AutoDispatchConfig, AutoLabelConfig, PolicyConfig } from '../config/config.js';
 
 function policy(overrides: Partial<PolicyConfig> = {}): PolicyConfig {
   return {
@@ -30,6 +30,14 @@ const autoLabelConfig: AutoLabelConfig = {
   enabled: true,
   defaultLabels: [],
   rules: []
+};
+
+const autoDispatchConfig: AutoDispatchConfig = {
+  enabled: false,
+  mode: 'triage',
+  maxPerPoll: 1,
+  skipWhenLabels: ['triaged'],
+  requireLabels: []
 };
 
 function makeJob(policyConfig: PolicyConfig, mode: RepairJob['mode']): RepairJob {
@@ -55,6 +63,7 @@ function makeJob(policyConfig: PolicyConfig, mode: RepairJob['mode']): RepairJob
       workspaceRoot: '.workspaces',
       agent: { command: 'true', args: [], timeoutSeconds: 60 },
       autoLabel: autoLabelConfig,
+      autoDispatch: autoDispatchConfig,
       policy: policyConfig
     },
     createdAt: '2026-07-04T00:00:00.000Z'

@@ -23,6 +23,17 @@ const fixbotConfig = {
   }
 };
 
+const autoDispatchConfig = {
+  autoLabel: fixbotConfig.autoLabel,
+  autoDispatch: {
+    enabled: true,
+    mode: 'triage',
+    maxPerPoll: 1,
+    skipWhenLabels: ['triaged'],
+    requireLabels: ['crash-report']
+  }
+};
+
 // One page of `gh api repos/acme/widgets/issues`:
 // #12 matches both rules but already carries `docs`, so only `crash-report`
 // may be added; #30 matches nothing and defaultLabels is empty; #33 already
@@ -169,7 +180,7 @@ test('poll-issues auto-label orchestration', async (t) => {
 
     await t.test('next pass resumes from the persisted since', async () => {
       const out = await runCommand(poll([REPO], { state: customState }), h.cwd);
-      assert.ok(out.includes('No issues labeled.'), out);
+      assert.ok(out.includes('No issues labeled or dispatched.'), out);
       const calls = await ghCalls(h.callsFile);
       assert.equal(calls.length, 4, calls.join('\n'));
       assert.ok(at(calls, 3).includes(`since=${NEWEST}`), at(calls, 3));
@@ -186,11 +197,26 @@ test('poll-issues auto-label orchestration', async (t) => {
       assert.ok(!at(calls, 4).includes(`since=${NEWEST}`), at(calls, 4));
     });
 
+    await t.test('auto-dispatch dry-run previews only eligible issues and does not run an agent', async () => {
+      await writeFile(join(h.cwd, '.fixbot.json'), JSON.stringify(autoDispatchConfig));
+      const before = (await ghCalls(h.callsFile)).length;
+      const out = await runCommand(poll([REPO], { 'dry-run': true }), h.cwd);
+      assert.ok(out.includes('Would label acme/widgets#12: crash-report'), out);
+      assert.ok(out.includes('Would auto-dispatch triage for acme/widgets#12'), out);
+      assert.equal(out.split('Would auto-dispatch ').length - 1, 1, out);
+      assert.ok(!out.includes('acme/widgets#30'), out);
+      assert.ok(!out.includes('acme/widgets#33'), out);
+      const passCalls = (await ghCalls(h.callsFile)).slice(before);
+      assert.equal(passCalls.length, 1, passCalls.join('\n'));
+      assert.ok(!at(passCalls, 0).includes('--method POST'), at(passCalls, 0));
+      assert.equal(await pathExists(defaultState), false, 'dry-run wrote issue poll state');
+    });
+
     await t.test('autoLabel.enabled=false disables labeling entirely', async () => {
       await writeFile(join(h.cwd, '.fixbot.json'), JSON.stringify({ autoLabel: { ...fixbotConfig.autoLabel, enabled: false } }));
       const before = (await ghCalls(h.callsFile)).length;
       const out = await runCommand(poll([REPO], { 'dry-run': true }), h.cwd);
-      assert.ok(out.includes('No issues labeled.'), out);
+      assert.ok(out.includes('No issues labeled or dispatched.'), out);
       assert.ok(!out.includes('Would label'), out);
       // The disabled pass still reads the page but never proposes a mutation.
       const passCalls = (await ghCalls(h.callsFile)).slice(before);

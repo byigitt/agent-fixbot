@@ -172,11 +172,15 @@ Existing bot PR bulunursa `gh pr checkout` ile aynı branch'e devam edilir ve pu
 
 ## Issue auto-label lifecycle
 
-`poll-issues` yeni/güncellenmiş açık issue'ları okur, PR kayıtlarını `pull_request` alanından filtreler ve `autoLabel` kurallarına göre eksik semantic label'ları ekler. Bu yol ajan çalıştırmaz; hızlı ve ucuz triage içindir.
+`poll-issues` yeni/güncellenmiş açık issue'ları okur, PR kayıtlarını `pull_request` alanından filtreler ve `autoLabel` kurallarına göre eksik semantic label'ları ekler. Opsiyonel `autoDispatch` açıksa aynı geçişte mevcut modlardan birini (`triage`, `reproduce`, `fix`) otomatik başlatabilir.
 
 - State dosyası varsayılan: `.fixbot/issue-state/<owner-repo>.json`.
-- `--dry-run` issue'ları okur ve ne yapacağını yazar; label mutasyonu ve state write yapmaz.
+- `--dry-run` issue'ları okur ve ne yapacağını yazar; label mutasyonu, agent dispatch ve state write yapmaz.
 - Non-dry modda yalnız eksik label'lar eklenir; mevcut label tekrar eklenmez.
+- `autoDispatch.enabled:false` varsayılandır; agent maliyeti/yan etkisi açık opt-in ister.
+- `autoDispatch.maxPerPoll`, `skipWhenLabels` ve `requireLabels` gürültülü issue update'lerinin paralel/pahalı job doğurmasını sınırlar.
+- Otomatik başlatılan job mevcut per-issue lock'u kullanır; aynı issue için paralel agent çalışmaz.
+- Wrapper started status'ı idempotent marker/upsert ile yazar; human opening/progress tonunu agent prompt'u kendi artifact/comment içeriğinde üretir.
 - Varsayılan `defaultLabels: []`; label bulunmayan issue'ya repo'da var olmayan `needs-triage` gibi label basıp job'ı bozmaz. Default label isteniyorsa repo label'ı önceden oluşturulup config'e eklenmeli.
 - Bu semantic label sistemi `policy.statusLabels` değildir; status label'ları job lifecycle içindir.
 
@@ -267,6 +271,13 @@ Kurallar:
       { "label": "question", "keywords": ["question", "how do i", "how to", "help"] }
     ]
   },
+  "autoDispatch": {
+    "enabled": false,
+    "mode": "triage",
+    "maxPerPoll": 1,
+    "skipWhenLabels": ["triaged"],
+    "requireLabels": []
+  },
   "policy": {
     "requireHumanReview": true,
     "allowLiveServices": false,
@@ -351,7 +362,7 @@ Wrapper GitHub token export etmemeli; GitHub mutasyonları `agent-fixbot` taraf�
 - [ ] `.fixbot.json` botName, agent command ve policy değerleri set.
 - [ ] `node dist/cli.js doctor` geçiyor.
 - [ ] `prepare --dry-run`, `triage --dry-run`, `review --dry-run`, `fix --dry-run` geçiyor.
-- [ ] `poll-issues --dry-run` beklenen semantic label kararlarını gösteriyor ama label/state yazmıyor.
+- [ ] `poll-issues --dry-run` beklenen semantic label ve auto-dispatch kararlarını gösteriyor ama label/state/agent çalıştırmıyor.
 - [ ] `poll-comments --dry-run` beklenen komutları gösteriyor ama state yazmıyor.
 - [ ] Non-dry `poll-issues` ve `poll-comments` için state dosyaları kalıcı diskte.
 - [ ] `.workspaces`, `.fixbot/locks`, `.fixbot/running`, `.fixbot/issue-state`, `.fixbot/poll-state` kalıcı ve cleanup politikası belirli.

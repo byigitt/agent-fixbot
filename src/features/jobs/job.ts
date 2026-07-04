@@ -14,6 +14,7 @@ export type RepairJob = {
   config: FixbotConfig;
   createdAt: string;
   existingPullRequest?: PullRequestResult;
+  autoDispatched?: boolean;
 };
 
 export function createRepairJob(input: {
@@ -23,6 +24,7 @@ export function createRepairJob(input: {
   base?: string;
   branch?: string;
   existingPullRequest?: PullRequestResult;
+  autoDispatched?: boolean;
 }): RepairJob {
   const safeTitle = input.issue.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 42);
   const id = `${input.issue.repo.replace('/', '-')}-${input.issue.number}-${Date.now()}`;
@@ -36,6 +38,7 @@ export function createRepairJob(input: {
     issue: input.issue,
     config: input.config,
     ...(input.existingPullRequest ? { existingPullRequest: input.existingPullRequest } : {}),
+    ...(input.autoDispatched ? { autoDispatched: true } : {}),
     createdAt: new Date().toISOString()
   };
 }

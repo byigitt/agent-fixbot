@@ -55,6 +55,15 @@
       }
     ]
   },
+  "autoDispatch": {
+    "enabled": false,
+    "mode": "triage",
+    "maxPerPoll": 1,
+    "skipWhenLabels": [
+      "triaged"
+    ],
+    "requireLabels": []
+  },
   "policy": {
     "requireHumanReview": true,
     "allowLiveServices": false,
