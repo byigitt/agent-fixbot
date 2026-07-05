@@ -5,9 +5,8 @@
   "agent": {
     "command": "omp",
     "args": [
-      "exec",
-      "--prompt-file",
-      "{prompt}"
+      "-p",
+      "@{prompt}"
     ],
     "timeoutSeconds": 2700
   },

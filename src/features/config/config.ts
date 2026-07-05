@@ -61,7 +61,7 @@ export const defaultConfig: FixbotConfig = {
   workspaceRoot: '.workspaces',
   agent: {
     command: 'omp',
-    args: ['exec', '--prompt-file', '{prompt}'],
+    args: ['-p', '@{prompt}'],
     timeoutSeconds: 2700
   },
   autoLabel: {
@@ -96,8 +96,9 @@ export const defaultConfig: FixbotConfig = {
     requireTestEvidence: false,
     requireChangelog: false,
     requireLiveServiceEvidence: false,
+    // No `started` label: the opener comment already says the bot is on it.
+    // The remaining labels are terminal states and double as autoDispatch skip guards.
     statusLabels: {
-      started: 'fixbot:running',
       blocked: 'fixbot:blocked',
       reproduced: 'fixbot:reproduced',
       'no-repro': 'fixbot:no-repro',
