@@ -162,6 +162,25 @@ test('publishRepair evidence wiring', async (t) => {
       }
     });
 
+    await t.test('a brand-new untracked file counts as a publishable diff, .fixbot artifacts do not', async () => {
+      const repo = await mkdtemp(join(tmpdir(), 'fixbot-publisher-'));
+      try {
+        await writeFile(join(repo, 'a.txt'), 'alpha\n');
+        await run(repo, ['init']);
+        await run(repo, ['add', '-A']);
+        await run(repo, ['commit', '-m', 'init']);
+        // Only wrapper artifacts dirty: must NOT publish.
+        await writeEvidence(repo, { tests: [], changelog: [] });
+        assert.strictEqual(await publishRepair(repo, makeJob(policy({}), 'fix'), rejectingGitHubClient(), { dryRun: true }), undefined);
+        // A new untracked product file (e.g. a README the agent created): must publish.
+        await writeFile(join(repo, 'README.md'), '# hi\n');
+        const pr = await publishRepair(repo, makeJob(policy({}), 'fix'), rejectingGitHubClient(), { dryRun: true });
+        assert.ok(pr, 'an untracked new file must count as a publishable diff');
+      } finally {
+        await rm(repo, { recursive: true, force: true });
+      }
+    });
+
     await t.test('publishes the dry-run PR once the configured evidence is satisfied', async () => {
       const repo = await makeDirtyRepo();
       try {

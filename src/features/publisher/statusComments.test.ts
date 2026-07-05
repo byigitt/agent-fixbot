@@ -94,7 +94,8 @@ test('postStatusComment', async (t) => {
     // in the body itself.
     assert.strictEqual(upserted.marker, '<!-- agent-fixbot:status:pr-opened -->');
     assert.ok(body.includes(upserted.marker), body);
-    assert.ok(body.includes('PR opened'), body);
+    // The visible body is natural prose: no robotic "**FixBot ...**" headers.
+    assert.ok(!body.includes('FixBot'), body);
     assert.ok(body.includes('Opened a fix PR for the empty-name save crash.'), body);
     assert.ok(body.includes('pnpm test: previously failing save.test.ts now passes'), body);
     assert.ok(body.includes('PR: https://github.com/acme/widgets/pull/41'), body);
