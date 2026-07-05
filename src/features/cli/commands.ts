@@ -9,6 +9,7 @@ import { createRepairJob, type RepairMode } from '../jobs/job.js';
 import { acquireJobLock, releaseJobLock } from '../jobs/jobLock.js';
 import { clearRunningJob, readRunningJob, recordRunningJob, stopRunningJob } from '../jobs/runningJobs.js';
 import { writeJobFiles } from '../jobs/jobStore.js';
+import { enqueueJob, readQueue, writeQueue, type QueuedJob } from '../jobs/jobQueue.js';
 import { renderRepairPrompt } from '../prompts/renderPrompt.js';
 import { NoopAgentRunner } from '../agents/noopAgentRunner.js';
 import { CommandAgentRunner } from '../agents/commandAgentRunner.js';
@@ -35,7 +36,7 @@ type RunContext = {
 };
 
 type PollState = { since?: string };
-type IssuePollState = { since?: string };
+type IssuePollState = { since?: string; pending?: number[] /* legacy, migrated into the job queue */ };
 
 const prModes = new Set<RepairMode>(['review', 'address-review', 'fix-ci']);
 const commentOnlyArtifacts: Partial<Record<RepairMode, { file: string; fallback: string; status: 'triaged' | 'reviewed' }>> = {
@@ -84,6 +85,7 @@ export async function runCommand(parsed: ParsedArgs, cwd: string): Promise<strin
   if (parsed.command === 'poll-comments') return pollComments(parsed, cwd);
   if (parsed.command === 'poll-issues') return pollIssues(parsed, cwd);
   if (parsed.command === 'poll-reviews') return pollReviews(parsed, cwd);
+  if (parsed.command === 'process-queue') return processQueue(parsed, cwd);
   if (parsed.command === 'daemon' || parsed.command === 'watch') return runDaemon(parsed, cwd);
   if (parsed.command === 'stop') return stopCommand(parsed, cwd);
   if (parsed.command === 'prepare' || parsed.command === 'fix' || parsed.command === 'reproduce' || parsed.command === 'triage' || parsed.command === 'review' || parsed.command === 'fix-ci' || parsed.command === 'address-review') {
@@ -135,8 +137,18 @@ async function pollComments(parsed: ParsedArgs, cwd: string): Promise<string> {
     }, botName);
     debugLog(`comment on #${comment.issueNumber} by @${comment.author ?? 'unknown'}: ${routed ? `routed to ${routed.command}` : 'no bot command'}`);
     if (!routed) continue;
-    const output = await dispatchRoutedCommand(routed, cwd, dryRun);
-    outputs.push(`Dispatched ${routed.command} for ${repo}#${routed.ref.number}\n${output.trimEnd()}`);
+    // Stop never waits behind the queue: it must be able to kill the currently running job.
+    if (routed.command === 'stop') {
+      const output = await stopRef(routed.ref, cwd);
+      outputs.push(`Dispatched stop for ${repo}#${routed.ref.number}\n${output.trimEnd()}`);
+      continue;
+    }
+    if (dryRun) {
+      outputs.push(`Would queue ${routed.command} for ${repo}#${routed.ref.number}`);
+      continue;
+    }
+    const queued = await enqueueJob(cwd, repo, { number: routed.ref.number, mode: routed.command });
+    outputs.push(`${queued ? 'Queued' : 'Already queued'} ${routed.command} for ${repo}#${routed.ref.number}`);
   }
   if (newest && !dryRun) await writeJson(stateFile, { since: newest });
   return outputs.length > 0 ? outputs.join('\n') + '\n' : 'No bot commands found.\n';
@@ -154,7 +166,7 @@ function labelsForIssue(issue: RecentIssue, config: AutoLabelConfig): string[] {
 }
 
 // Returns a skip reason, or undefined when the issue should be auto-dispatched.
-function autoDispatchSkipReason(issue: RecentIssue, plannedLabels: string[], config: AutoDispatchConfig): string | undefined {
+function autoDispatchSkipReason(issue: Pick<IssueContext, 'labels'>, plannedLabels: string[], config: AutoDispatchConfig): string | undefined {
   if (!config.enabled) return 'autoDispatch.enabled is false in .fixbot.json';
   const labels = new Set([...issue.labels.map((label) => label.name), ...plannedLabels]);
   const skipLabel = config.skipWhenLabels.find((label) => labels.has(label));
@@ -184,7 +196,12 @@ async function pollIssues(parsed: ParsedArgs, cwd: string): Promise<string> {
   debugLog(`poll-issues ${repo}: fetched ${issues.length} issue(s)`);
   const outputs: string[] = [];
   let newest = since;
-  let dispatched = 0;
+  // Migrate the legacy in-state pending list into the shared job queue.
+  if (!dryRun) {
+    for (const number of state.pending ?? []) {
+      await enqueueJob(cwd, repo, { number, mode: config.autoDispatch.mode, auto: true, startSummary: autoDispatchStartSummary(config.autoDispatch.mode) });
+    }
+  }
   for (const issue of issues) {
     const timestamp = issue.updatedAt ?? issue.createdAt;
     if (timestamp && (!newest || Date.parse(timestamp) > Date.parse(newest))) newest = timestamp;
@@ -194,27 +211,17 @@ async function pollIssues(parsed: ParsedArgs, cwd: string): Promise<string> {
       if (!dryRun) await github.addLabels(repo, issue.number, labels);
       outputs.push(`${dryRun ? 'Would label' : 'Labeled'} ${repo}#${issue.number}: ${labels.join(', ')}`);
     }
-    const skipReason = dispatched >= config.autoDispatch.maxPerPoll
-      ? `maxPerPoll (${config.autoDispatch.maxPerPoll}) reached this poll`
-      : autoDispatchSkipReason(issue, labels, config.autoDispatch);
+    const skipReason = autoDispatchSkipReason(issue, labels, config.autoDispatch);
     if (skipReason) {
       debugLog(`skipping auto-dispatch for ${repo}#${issue.number}: ${skipReason}`);
+    } else if (dryRun) {
+      outputs.push(`Would queue ${config.autoDispatch.mode} for ${repo}#${issue.number}`);
     } else {
-      dispatched += 1;
-      const ref = `${repo}#${issue.number}`;
-      if (dryRun) {
-        outputs.push(`Would auto-dispatch ${config.autoDispatch.mode} for ${ref}`);
-      } else {
-        const output = await runCommand({
-          command: config.autoDispatch.mode,
-          positional: [ref],
-          flags: { 'start-summary': autoDispatchStartSummary(config.autoDispatch.mode), 'auto-dispatched': true }
-        }, cwd);
-        outputs.push(`Auto-dispatched ${config.autoDispatch.mode} for ${ref}\n${output.trimEnd()}`);
-      }
+      const queued = await enqueueJob(cwd, repo, { number: issue.number, mode: config.autoDispatch.mode, auto: true, startSummary: autoDispatchStartSummary(config.autoDispatch.mode) });
+      outputs.push(`${queued ? 'Queued' : 'Already queued'} ${config.autoDispatch.mode} for ${repo}#${issue.number}`);
     }
   }
-  if (newest && !dryRun) await writeJson(stateFile, { since: newest });
+  if (!dryRun) await writeJson(stateFile, newest ? { since: newest } : {});
   return outputs.length > 0 ? outputs.join('\n') + '\n' : 'No issues labeled or dispatched.\n';
 }
 
@@ -276,20 +283,68 @@ async function pollReviews(parsed: ParsedArgs, cwd: string): Promise<string> {
     const seen = prs[String(number)];
     if (seen && Date.parse(latest) <= Date.parse(seen)) continue;
     if (dryRun) {
-      outputs.push(`Would address review feedback on ${repo}#${number} (activity ${latest})`);
+      outputs.push(`Would queue address-review for ${repo}#${number} (activity ${latest})`);
       continue;
     }
-    const output = await runCommand({
-      command: 'address-review',
-      positional: [`${repo}#${number}`],
-      flags: { 'start-summary': 'New review feedback — on it.', 'auto-dispatched': true }
-    }, cwd);
-    // Keep the cursor when the ref is locked so the feedback is retried next poll.
-    if (!output.includes('Job already running')) prs[String(number)] = latest;
-    outputs.push(`Auto-dispatched address-review for ${repo}#${number}\n${output.trimEnd()}`);
+    // The queue owns retries now (locked refs are re-queued at drain time), so the cursor always advances.
+    const queued = await enqueueJob(cwd, repo, { number, mode: 'address-review', startSummary: 'New review feedback — on it.' });
+    prs[String(number)] = latest;
+    outputs.push(`${queued ? 'Queued' : 'Already queued'} address-review for ${repo}#${number}`);
   }
   if (!dryRun) await writeJson(stateFile, { prs });
   return outputs.length > 0 ? outputs.join('\n') + '\n' : 'No new review activity.\n';
+}
+
+// Serial queue worker: drains up to autoDispatch.maxPerPoll jobs, one at a time.
+// A running job blocks the drain (and the daemon tick) — by design, one agent at a time.
+// `stop` still works mid-job from poll-comments or the CLI because running PIDs are tracked.
+async function processQueue(parsed: ParsedArgs, cwd: string): Promise<string> {
+  const repo = parsed.positional[0];
+  if (!repo) throw new Error(`Missing repo for process-queue.\n\n${helpText}`);
+  const dryRun = flagBool(parsed.flags, 'dry-run');
+  const config = await loadConfig(cwd);
+  const items = await readQueue(cwd, repo);
+  if (items.length === 0) return 'Queue empty.\n';
+  const github = new GhCliClient(cwd);
+  const remaining: QueuedJob[] = [];
+  const outputs: string[] = [];
+  let dispatched = 0;
+  for (const item of items) {
+    if (dispatched >= config.autoDispatch.maxPerPoll) {
+      remaining.push(item);
+      continue;
+    }
+    const ref = `${repo}#${item.number}`;
+    // Auto-dispatched issue jobs re-check skip labels (planned auto-labels included)
+    // so anything resolved/triaged since it was queued drops off instead of running.
+    if (item.auto && !prModes.has(item.mode)) {
+      const issue = await github.getIssueContext(repo, item.number).catch(() => undefined);
+      if (!issue) continue; // gone/inaccessible: drop from queue
+      const skipReason = autoDispatchSkipReason(issue, labelsForIssue(issue, config.autoLabel), config.autoDispatch);
+      if (skipReason) {
+        debugLog(`dropping queued ${item.mode} for ${ref}: ${skipReason}`);
+        continue;
+      }
+    }
+    dispatched += 1;
+    if (dryRun) {
+      outputs.push(`Would run ${item.mode} for ${ref}`);
+      continue;
+    }
+    const output = await runCommand({
+      command: item.mode,
+      positional: [ref],
+      flags: {
+        ...(item.startSummary ? { 'start-summary': item.startSummary } : {}),
+        ...(item.auto ? { 'auto-dispatched': true } : {})
+      }
+    }, cwd);
+    // A locked ref goes back to the tail so the next drain retries it.
+    if (output.includes('Job already running')) remaining.push(item);
+    outputs.push(`Ran ${item.mode} for ${ref}\n${output.trimEnd()}`);
+  }
+  if (!dryRun) await writeQueue(cwd, repo, remaining);
+  return outputs.length > 0 ? outputs.join('\n') + '\n' : 'Queue drained nothing.\n';
 }
 
 async function runDaemon(parsed: ParsedArgs, cwd: string): Promise<string> {
@@ -336,6 +391,13 @@ async function runDaemon(parsed: ParsedArgs, cwd: string): Promise<string> {
           daemonLog(`poll-issues failed: ${error instanceof Error ? error.message : String(error)}`);
         }
         schedule.issuesNextAt = Date.now() + issuesInterval;
+      }
+      // Drain after both pollers so jobs queued this tick run in the same tick (incl. --once).
+      try {
+        const drained = await runCommand({ command: 'process-queue', positional: [repo], flags: issueDaemonFlags(parsed) }, cwd);
+        if (!drained.startsWith('Queue empty')) daemonLog(drained.trimEnd());
+      } catch (error) {
+        daemonLog(`process-queue failed: ${error instanceof Error ? error.message : String(error)}`);
       }
       if (once) break;
       const nextAt = Math.min(schedule.commentsNextAt, schedule.issuesNextAt);
