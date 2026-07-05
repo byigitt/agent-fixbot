@@ -10,6 +10,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/cli.js daemon",
+    "dev": "pnpm build && node dist/cli.js daemon",
     "test": "pnpm build && node --test \"dist/**/*.test.js\"",
     "doctor": "node dist/cli.js doctor",
     "smoke": "node dist/cli.js prepare openclaw/openclaw#1 --dry-run"

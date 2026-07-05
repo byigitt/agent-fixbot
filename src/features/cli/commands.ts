@@ -41,6 +41,35 @@ const commentOnlyArtifacts: Partial<Record<RepairMode, { file: string; fallback:
   review: { file: '.fixbot/review.md', fallback: '_Agent did not write `.fixbot/review.md`._', status: 'reviewed' }
 };
 
+type DaemonSchedule = {
+  commentsNextAt: number;
+  issuesNextAt: number;
+};
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function intervalMs(flags: ParsedArgs['flags'], key: string, defaultSeconds: number): number {
+  const raw = flagString(flags, key);
+  if (raw === undefined) return defaultSeconds * 1000;
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds) || seconds <= 0) throw new Error(`--${key} must be a positive number of seconds.`);
+  return seconds * 1000;
+}
+
+function daemonFlags(parsed: ParsedArgs, botName: string): ParsedArgs['flags'] {
+  return flagBool(parsed.flags, 'dry-run') ? { bot: botName, 'dry-run': true } : { bot: botName };
+}
+
+function issueDaemonFlags(parsed: ParsedArgs): ParsedArgs['flags'] {
+  return flagBool(parsed.flags, 'dry-run') ? { 'dry-run': true } : {};
+}
+
+function daemonLog(message: string): void {
+  process.stdout.write(`[${new Date().toISOString()}] ${message}\n`);
+}
+
 export async function runCommand(parsed: ParsedArgs, cwd: string): Promise<string> {
   if (parsed.command === 'help' || parsed.command === '--help' || parsed.command === '-h') return helpText;
   if (parsed.command === 'doctor') return runDoctor(cwd);
@@ -48,6 +77,7 @@ export async function runCommand(parsed: ParsedArgs, cwd: string): Promise<strin
   if (parsed.command === 'dispatch-comment') return dispatchCommentFile(parsed, cwd);
   if (parsed.command === 'poll-comments') return pollComments(parsed, cwd);
   if (parsed.command === 'poll-issues') return pollIssues(parsed, cwd);
+  if (parsed.command === 'daemon' || parsed.command === 'watch') return runDaemon(parsed, cwd);
   if (parsed.command === 'stop') return stopCommand(parsed, cwd);
   if (parsed.command === 'prepare' || parsed.command === 'fix' || parsed.command === 'reproduce' || parsed.command === 'triage' || parsed.command === 'review' || parsed.command === 'fix-ci' || parsed.command === 'address-review') {
     const mode = parsed.command === 'prepare' ? 'prepare' : parsed.command;
@@ -163,6 +193,56 @@ async function pollIssues(parsed: ParsedArgs, cwd: string): Promise<string> {
   }
   if (newest && !dryRun) await writeJson(stateFile, { since: newest });
   return outputs.length > 0 ? outputs.join('\n') + '\n' : 'No issues labeled or dispatched.\n';
+}
+
+async function runDaemon(parsed: ParsedArgs, cwd: string): Promise<string> {
+  const repo = parsed.positional[0];
+  if (!repo) throw new Error(`Missing repo for daemon.\n\n${helpText}`);
+  const botName = flagString(parsed.flags, 'bot') ?? 'fixbot';
+  const commentsInterval = intervalMs(parsed.flags, 'comments-interval', 60);
+  const issuesInterval = intervalMs(parsed.flags, 'issues-interval', 180);
+  const once = flagBool(parsed.flags, 'once');
+  let stopping = false;
+  const stop = () => {
+    stopping = true;
+  };
+  process.once('SIGINT', stop);
+  process.once('SIGTERM', stop);
+  const schedule: DaemonSchedule = { commentsNextAt: 0, issuesNextAt: 0 };
+  daemonLog(`Watching ${repo} as @${botName}; comments every ${commentsInterval / 1000}s, issues every ${issuesInterval / 1000}s.`);
+  try {
+    while (!stopping) {
+      const now = Date.now();
+      if (now >= schedule.commentsNextAt) {
+        daemonLog('Polling comments.');
+        try {
+          const output = await runCommand({ command: 'poll-comments', positional: [repo], flags: daemonFlags(parsed, botName) }, cwd);
+          daemonLog(output.trimEnd());
+        } catch (error) {
+          daemonLog(`poll-comments failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        schedule.commentsNextAt = Date.now() + commentsInterval;
+      }
+      if (stopping) break;
+      if (now >= schedule.issuesNextAt) {
+        daemonLog('Polling issues.');
+        try {
+          const output = await runCommand({ command: 'poll-issues', positional: [repo], flags: issueDaemonFlags(parsed) }, cwd);
+          daemonLog(output.trimEnd());
+        } catch (error) {
+          daemonLog(`poll-issues failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        schedule.issuesNextAt = Date.now() + issuesInterval;
+      }
+      if (once) break;
+      const nextAt = Math.min(schedule.commentsNextAt, schedule.issuesNextAt);
+      await sleep(Math.min(1000, Math.max(250, nextAt - Date.now())));
+    }
+  } finally {
+    process.removeListener('SIGINT', stop);
+    process.removeListener('SIGTERM', stop);
+  }
+  return 'Daemon stopped.\n';
 }
 
 async function dispatchRoutedCommand(routed: NonNullable<RoutedCommand>, cwd: string, dryRun: boolean): Promise<string> {

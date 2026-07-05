@@ -7,6 +7,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
     if (!arg) continue;
+    if (arg === '--') continue;
     if (arg.startsWith('--')) {
       const key = arg.slice(2);
       const next = rest[i + 1];

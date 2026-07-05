@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCommand } from './commands.js';
 import { helpText } from './help.js';
-import type { ParsedArgs } from './args.js';
+import { parseArgs, type ParsedArgs } from './args.js';
 
 function args(command: string, positional: string[] = [], flags: ParsedArgs['flags'] = {}): ParsedArgs {
   return { command, positional, flags };
@@ -47,6 +47,14 @@ for (const alias of ['help', '--help', '-h']) {
 test('runCommand falls back to the help text for an unknown command', async () => {
   await inTempCwd(async (cwd) => {
     assert.equal(await runCommand(args('frobnicate'), cwd), helpText);
+  });
+});
+
+test('parseArgs ignores the npm script -- separator', () => {
+  assert.deepStrictEqual(parseArgs(['daemon', '--', 'owner/repo', '--bot', 'flyleaffan9']), {
+    command: 'daemon',
+    positional: ['owner/repo'],
+    flags: { bot: 'flyleaffan9' }
   });
 });
 

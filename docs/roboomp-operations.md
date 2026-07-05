@@ -107,6 +107,21 @@ node dist/cli.js poll-comments owner/repo --bot roboomp --dry-run
 
 Not: `--dry-run` GitHub mutasyonlarını engeller ve nested commands'a `--dry-run` aktarır; poll state yazmaz. Böylece preview gerçek run'da yorumların atlanmasına yol açmaz.
 
+Lokal sürekli runner:
+
+```bash
+pnpm dev -- owner/repo --bot roboomp --dry-run
+pnpm start -- owner/repo --bot roboomp
+```
+
+`pnpm dev` önce build alır, sonra `daemon` komutunu çalıştırır. `pnpm start` mevcut `dist/` çıktısını kullanır. Daemon tek process içinde `poll-comments` ve `poll-issues` pass'lerini sırayla bekleyerek çalıştırır; aynı process içinde overlap yapmaz. Varsayılan interval'ler:
+
+```bash
+node dist/cli.js daemon owner/repo --bot roboomp --comments-interval 60 --issues-interval 180
+```
+
+`Ctrl+C` veya `SIGTERM` ile durur. Yerel geliştirmede önce `--dry-run` kullan; gerçek comment/label/agent dispatch için dry-run'ı kaldır.
+
 ## Desteklenen yorumlar
 
 - `@roboomp fix`
