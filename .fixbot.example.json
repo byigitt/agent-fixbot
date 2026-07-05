@@ -11,6 +11,10 @@
     ],
     "timeoutSeconds": 2700
   },
+  "git": {
+    "authorName": "fixbot",
+    "authorEmail": "fixbot@users.noreply.github.com"
+  },
   "autoLabel": {
     "enabled": true,
     "defaultLabels": [],

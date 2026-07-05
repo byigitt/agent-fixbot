@@ -9,6 +9,7 @@ function mergeConfig(base: FixbotConfig, override: Partial<FixbotConfig>): Fixbo
     agent: { ...base.agent, ...override.agent },
     autoLabel: { ...base.autoLabel, ...override.autoLabel, rules: override.autoLabel?.rules ?? base.autoLabel.rules, defaultLabels: override.autoLabel?.defaultLabels ?? base.autoLabel.defaultLabels },
     autoDispatch: { ...base.autoDispatch, ...override.autoDispatch, skipWhenLabels: override.autoDispatch?.skipWhenLabels ?? base.autoDispatch.skipWhenLabels, requireLabels: override.autoDispatch?.requireLabels ?? base.autoDispatch.requireLabels },
+    git: { ...base.git, ...override.git },
     policy: { ...base.policy, ...override.policy, statusLabels: { ...base.policy.statusLabels, ...override.policy?.statusLabels } }
   };
 }

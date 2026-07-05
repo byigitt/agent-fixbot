@@ -40,6 +40,11 @@ const autoDispatchConfig: AutoDispatchConfig = {
   requireLabels: []
 };
 
+const gitConfig = {
+  authorName: 'fixbot',
+  authorEmail: 'fixbot@users.noreply.github.com'
+};
+
 function makeJob(policyConfig: PolicyConfig, mode: RepairJob['mode']): RepairJob {
   return {
     id: 'acme-widgets-7-1',
@@ -64,6 +69,7 @@ function makeJob(policyConfig: PolicyConfig, mode: RepairJob['mode']): RepairJob
       agent: { command: 'true', args: [], timeoutSeconds: 60 },
       autoLabel: autoLabelConfig,
       autoDispatch: autoDispatchConfig,
+      git: gitConfig,
       policy: policyConfig
     },
     createdAt: '2026-07-04T00:00:00.000Z'
@@ -174,5 +180,62 @@ test('publishRepair evidence wiring', async (t) => {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
+  }
+});
+
+// Bot-published commits must carry the configured bot identity — not the
+// ambient git identity of whoever runs the daemon — so maintainer commits and
+// bot commits stay attributable. The fixture repo's init commit uses a distinct
+// "human" identity; a leak of that (or of env identity) into the published
+// commit reddens the assertion. GIT_AUTHOR_*/GIT_COMMITTER_* are scrubbed
+// because git lets them override `-c user.name`, which is the mechanism under test.
+test('publishRepair commits with the configured git author identity', async () => {
+  const saved: Record<string, string | undefined> = {};
+  for (const key of ['GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL']) {
+    saved[key] = process.env[key];
+    delete process.env[key];
+  }
+  for (const key of ['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM']) {
+    saved[key] = process.env[key];
+    process.env[key] = '/dev/null';
+  }
+  const root = await mkdtemp(join(tmpdir(), 'fixbot-publisher-author-'));
+  try {
+    // Local bare repo stands in for origin so the real commit->push path runs
+    // without any live remote.
+    const remote = join(root, 'remote.git');
+    const workspace = join(root, 'work');
+    await run(root, ['init', '--bare', 'remote.git']);
+    await run(root, ['init', 'work']);
+    await writeFile(join(workspace, 'a.txt'), 'alpha\nbeta\n');
+    await run(workspace, ['add', '-A']);
+    await run(workspace, ['-c', 'user.name=Local Maintainer', '-c', 'user.email=maintainer@example.invalid', 'commit', '-m', 'init']);
+    await run(workspace, ['remote', 'add', 'origin', remote]);
+    await writeFile(join(workspace, 'a.txt'), 'alpha\nBETA\n');
+
+    const job = makeJob(policy({ allowPush: true }), 'fix');
+    const github: GitHubClient = {
+      ...rejectingGitHubClient(),
+      createPullRequest: async () => ({ url: 'https://github.test/acme/widgets/pull/99', number: 99 })
+    };
+    const pr = await publishRepair(workspace, job, github, { dryRun: false });
+    assert.strictEqual(pr?.number, 99, 'publishRepair must surface the PR opened for the pushed branch');
+
+    // Assert on the remote side: this is the identity maintainers see on the
+    // pushed commit. Author AND committer must both be the configured bot.
+    const log = await git(remote, ['log', '-1', '--format=%an%n%ae%n%cn%n%ce', job.branch]);
+    assert.strictEqual(log.exitCode, 0, `branch ${job.branch} must exist on origin: ${log.stderr}`);
+    assert.deepStrictEqual(log.stdout.trim().split('\n'), [
+      job.config.git.authorName,
+      job.config.git.authorEmail,
+      job.config.git.authorName,
+      job.config.git.authorEmail
+    ]);
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await rm(root, { recursive: true, force: true });
   }
 });

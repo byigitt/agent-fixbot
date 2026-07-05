@@ -8,6 +8,15 @@ import { evaluateEvidenceGate } from './evidenceGate.js';
 
 export type PublishOptions = { dryRun: boolean; continueExisting?: boolean };
 
+function commitAuthorArgs(job: RepairJob): string[] {
+  return [
+    '-c',
+    `user.name=${job.config.git.authorName}`,
+    '-c',
+    `user.email=${job.config.git.authorEmail}`
+  ];
+}
+
 export async function publishRepair(workspace: string, job: RepairJob, github: GitHubClient, options: PublishOptions): Promise<PullRequestResult | undefined> {
   const guard = await evaluateDiffGuards(workspace, job.config.policy);
   if (!guard.ok) throw new Error(`Publisher guard failed:\n${guard.reasons.join('\n')}`);
@@ -24,7 +33,7 @@ export async function publishRepair(workspace: string, job: RepairJob, github: G
   }
   const add = await execFile('git', ['add', '.'], { cwd: workspace });
   if (add.exitCode !== 0) throw new Error(add.stderr || 'git add failed');
-  const commit = await execFile('git', ['commit', '-m', `fix: address issue #${job.issueNumber}`], { cwd: workspace });
+  const commit = await execFile('git', [...commitAuthorArgs(job), 'commit', '-m', `fix: address issue #${job.issueNumber}`], { cwd: workspace });
   if (commit.exitCode !== 0) throw new Error(commit.stderr || 'git commit failed');
   const pushRef = options.continueExisting && job.existingPullRequest?.headRefName ? `HEAD:${job.existingPullRequest.headRefName}` : job.branch;
   const push = await execFile('git', ['push', '-u', 'origin', pushRef], { cwd: workspace });

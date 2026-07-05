@@ -25,6 +25,11 @@ export type AutoDispatchConfig = {
   requireLabels: string[];
 };
 
+export type GitConfig = {
+  authorName: string;
+  authorEmail: string;
+};
+
 export type PolicyConfig = {
   requireHumanReview: boolean;
   allowLiveServices: boolean;
@@ -46,6 +51,7 @@ export type FixbotConfig = {
   agent: AgentConfig;
   autoLabel: AutoLabelConfig;
   autoDispatch: AutoDispatchConfig;
+  git: GitConfig;
   policy: PolicyConfig;
 };
 
@@ -74,6 +80,10 @@ export const defaultConfig: FixbotConfig = {
     maxPerPoll: 1,
     skipWhenLabels: ['triaged'],
     requireLabels: []
+  },
+  git: {
+    authorName: 'fixbot',
+    authorEmail: 'fixbot@users.noreply.github.com'
   },
   policy: {
     requireHumanReview: true,

@@ -276,6 +276,10 @@ Kurallar:
     "args": ["exec", "--prompt-file", "{prompt}"],
     "timeoutSeconds": 2700
   },
+  "git": {
+    "authorName": "roboomp",
+    "authorEmail": "roboomp@users.noreply.github.com"
+  },
   "autoLabel": {
     "enabled": true,
     "defaultLabels": [],
@@ -328,6 +332,8 @@ Gerçek PR için:
   }
 }
 ```
+
+`git.authorName` ve `git.authorEmail` sadece botun publish sırasında attığı PR commit'leri için kullanılır. Lokal maintainer commit'leri repo `git config user.name/user.email` değerlerini kullanmaya devam eder; böylece `byigitt` commit'leri ve `roboomp`/bot commit'leri ayrılır.
 
 ## OMP / Pi bağlama
 
