@@ -9,7 +9,7 @@ Kaynak kapsamı: bu repo (`src/**`, `.fixbot.example.json`, `package.json`), `ht
 - Bu proje artık **normal GitHub kullanıcısı gibi çalışan lokal/hosted CLI runner** sağlar.
 - Sürekli servis olmak zorunda değildir; `poll-issues` ve `poll-comments` komutları cron, systemd, launchd, GitHub Actions runner veya küçük bir daemon tarafından tekrar tekrar çağrılabilir.
 - İş modeli: recent open issues poll edilip semantic label kuralları uygulanabilir; recent issue/PR comments poll edilir, `@bot` komutları route edilir, issue/PR context `gh` ile çekilir, workspace hazırlanır, `omp`/`pi` ajanı prompt dosyasıyla çalışır, guard'lar geçerse PR/comment/label/update yapılır.
-- Varsayılan ajan komutu `omp exec --prompt-file {prompt}`. `pi` için config'te command/args değiştirmek yeterlidir.
+- Varsayılan ajan komutu `omp -p @{prompt}`. `pi` için config'te command/args değiştirmek yeterlidir.
 - Varsayılan güvenlik profili gerçek push'u kapatır: `policy.allowPush: false`. Gerçek PR için `.fixbot.json` içinde açıkça `true` yapılmalı.
 
 ## Normal GitHub kullanıcı modeli
@@ -273,7 +273,7 @@ Kurallar:
   "workspaceRoot": ".workspaces",
   "agent": {
     "command": "omp",
-    "args": ["exec", "--prompt-file", "{prompt}"],
+    "args": ["-p", "@{prompt}"],
     "timeoutSeconds": 2700
   },
   "git": {
@@ -343,7 +343,7 @@ OMP varsayılanı:
 {
   "agent": {
     "command": "omp",
-    "args": ["exec", "--prompt-file", "{prompt}"],
+    "args": ["-p", "@{prompt}"],
     "timeoutSeconds": 2700
   }
 }
@@ -355,7 +355,7 @@ Pi prompt dosyası kabul ediyorsa:
 {
   "agent": {
     "command": "pi",
-    "args": ["exec", "--prompt-file", "{prompt}"],
+    "args": ["-p", "@{prompt}"],
     "timeoutSeconds": 2700
   }
 }
