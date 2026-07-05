@@ -8,7 +8,10 @@ export async function readArtifact(workspace: string, relativePath: string, fall
 }
 
 export async function publishArtifactComment(github: GitHubClient, workspace: string, repo: string, number: number, relativePath: string, fallback: string, dryRun: boolean): Promise<string> {
-  const body = await readArtifact(workspace, relativePath, fallback);
-  if (!dryRun) await github.commentOnIssue(repo, number, body);
+  // Marker-keyed upsert: a re-dispatched job updates its previous artifact comment
+  // instead of stacking duplicates on the issue.
+  const marker = `<!-- agent-fixbot:artifact:${relativePath} -->`;
+  const body = `${marker}\n${await readArtifact(workspace, relativePath, fallback)}`;
+  if (!dryRun) await github.upsertIssueComment(repo, number, marker, body);
   return body;
 }
