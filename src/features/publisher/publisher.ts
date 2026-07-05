@@ -18,6 +18,11 @@ function commitAuthorArgs(job: RepairJob): string[] {
 }
 
 export async function publishRepair(workspace: string, job: RepairJob, github: GitHubClient, options: PublishOptions): Promise<PullRequestResult | undefined> {
+  // New files are invisible to `git diff`; intent-to-add makes untracked files count
+  // in the guards and numstat without staging their content. Job artifacts under
+  // .fixbot/ are wrapper plumbing and must reach neither the guard nor the PR.
+  const intent = await execFile('git', ['add', '-N', '--', '.', ':(exclude).fixbot'], { cwd: workspace });
+  if (intent.exitCode !== 0) throw new Error(intent.stderr || 'git add -N failed');
   const guard = await evaluateDiffGuards(workspace, job.config.policy);
   if (!guard.ok) throw new Error(`Publisher guard failed:\n${guard.reasons.join('\n')}`);
   const commandGate = await evaluateCommandGate(workspace, job.config.policy);
@@ -31,7 +36,7 @@ export async function publishRepair(workspace: string, job: RepairJob, github: G
     const checkout = await execFile('git', ['checkout', '-B', job.branch], { cwd: workspace });
     if (checkout.exitCode !== 0) throw new Error(checkout.stderr || 'git checkout failed');
   }
-  const add = await execFile('git', ['add', '.'], { cwd: workspace });
+  const add = await execFile('git', ['add', '--', '.', ':(exclude).fixbot'], { cwd: workspace });
   if (add.exitCode !== 0) throw new Error(add.stderr || 'git add failed');
   const commit = await execFile('git', [...commitAuthorArgs(job), 'commit', '-m', `fix: address issue #${job.issueNumber}`], { cwd: workspace });
   if (commit.exitCode !== 0) throw new Error(commit.stderr || 'git commit failed');

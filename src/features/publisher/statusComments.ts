@@ -13,31 +13,27 @@ export type StatusCommentInput = {
   dryRun: boolean;
 };
 
-const labels: Record<StatusCommentStatus, string> = {
-  started: 'Started',
-  blocked: 'Blocked',
-  'no-repro': 'No reproduction',
-  reproduced: 'Reproduced',
-  'pr-opened': 'PR opened',
-  'review-addressed': 'Review addressed',
-  triaged: 'Triaged',
-  reviewed: 'Reviewed'
-};
-
 export function statusMarker(status: StatusCommentStatus): string {
   return `<!-- agent-fixbot:status:${status} -->`;
 }
 
+// Label lifecycle without a comment: used when the real communication is an artifact comment or PR.
+export async function applyStatusLabels(github: GitHubClient, input: Pick<StatusCommentInput, 'repo' | 'number' | 'label' | 'removeLabels' | 'dryRun'>): Promise<void> {
+  if (input.dryRun) return;
+  for (const label of input.removeLabels ?? []) {
+    if (label !== input.label) await github.removeLabel(input.repo, input.number, label);
+  }
+  if (input.label) await github.addLabels(input.repo, input.number, [input.label]);
+}
+
 export async function postStatusComment(github: GitHubClient, input: StatusCommentInput): Promise<string> {
   const marker = statusMarker(input.status);
-  const detailLines = input.details?.length ? ['', 'Details:', ...input.details.map((detail) => `- ${detail}`)] : [];
-  const body = [marker, `**FixBot ${labels[input.status]}**`, '', input.summary, ...detailLines].join('\n').trimEnd() + '\n';
+  const detailLines = input.details?.length ? ['', ...input.details.map((detail) => `- ${detail}`)] : [];
+  // The marker is invisible on GitHub; the visible body is just natural prose, no bot-speak headers.
+  const body = [marker, input.summary, ...detailLines].join('\n').trimEnd() + '\n';
   if (!input.dryRun) {
     await github.upsertIssueComment(input.repo, input.number, marker, body);
-    for (const label of input.removeLabels ?? []) {
-      if (label !== input.label) await github.removeLabel(input.repo, input.number, label);
-    }
-    if (input.label) await github.addLabels(input.repo, input.number, [input.label]);
+    await applyStatusLabels(github, input);
   }
   return body;
 }
