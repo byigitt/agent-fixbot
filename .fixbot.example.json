@@ -12,7 +12,8 @@
   },
   "git": {
     "authorName": "fixbot",
-    "authorEmail": "fixbot@users.noreply.github.com"
+    "authorEmail": "fixbot@users.noreply.github.com",
+    "coAuthors": ["your-github-user <your-github-user@users.noreply.github.com>"]
   },
   "autoLabel": {
     "enabled": true,
