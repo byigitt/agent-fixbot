@@ -278,7 +278,8 @@ Kurallar:
   },
   "git": {
     "authorName": "roboomp",
-    "authorEmail": "roboomp@users.noreply.github.com"
+    "authorEmail": "roboomp@users.noreply.github.com",
+    "coAuthors": ["byigitt <byigitt@users.noreply.github.com>"]
   },
   "autoLabel": {
     "enabled": true,
@@ -333,7 +334,7 @@ Gerçek PR için:
 }
 ```
 
-`git.authorName` ve `git.authorEmail` sadece botun publish sırasında attığı PR commit'leri için kullanılır. Lokal maintainer commit'leri repo `git config user.name/user.email` değerlerini kullanmaya devam eder; böylece `byigitt` commit'leri ve `roboomp`/bot commit'leri ayrılır.
+`git.authorName` ve `git.authorEmail` sadece botun publish sırasında attığı PR commit'leri için kullanılır. Lokal maintainer commit'leri repo `git config user.name/user.email` değerlerini kullanmaya devam eder; böylece `byigitt` commit'leri ve `roboomp`/bot commit'leri ayrılır. `git.coAuthors` (`"Name <email>"` listesi) verilirse her publish commit'ine `Co-authored-by:` trailer'ı olarak eklenir; böylece PR commit'lerinde bot ile birlikte istediğin kişiler de co-author olarak görünür.
 
 ## OMP / Pi bağlama
 
