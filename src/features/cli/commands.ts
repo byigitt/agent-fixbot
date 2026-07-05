@@ -7,19 +7,20 @@ import { FixtureGitHubClient } from '../github/fixtureClient.js';
 import type { GitHubClient, IssueContext, PullRequestContext, PullRequestResult, RecentIssue } from '../github/githubClient.js';
 import { createRepairJob, type RepairMode } from '../jobs/job.js';
 import { acquireJobLock, releaseJobLock } from '../jobs/jobLock.js';
-import { clearRunningJob, recordRunningJob, stopRunningJob } from '../jobs/runningJobs.js';
+import { clearRunningJob, readRunningJob, recordRunningJob, stopRunningJob } from '../jobs/runningJobs.js';
 import { writeJobFiles } from '../jobs/jobStore.js';
 import { renderRepairPrompt } from '../prompts/renderPrompt.js';
 import { NoopAgentRunner } from '../agents/noopAgentRunner.js';
 import { CommandAgentRunner } from '../agents/commandAgentRunner.js';
 import { publishRepair } from '../publisher/publisher.js';
 import { publishArtifactComment } from '../publisher/artifactPublisher.js';
-import { postStatusComment, type StatusCommentStatus } from '../publisher/statusComments.js';
+import { applyStatusLabels, postStatusComment, type StatusCommentStatus } from '../publisher/statusComments.js';
 import { resolveReviewThreadsFromArtifact } from '../publisher/reviewThreads.js';
 import { preparePullRequestWorkspace, prepareWorkspace } from '../workspaces/workspaceService.js';
 import { profileProject, type ProjectProfile } from '../reproduction/projectProfiler.js';
 import { runReproductionPlan, writeReproductionReport } from '../reproduction/reproductionRunner.js';
-import { pathExists, readJson, writeJson } from '../../shared/fs.js';
+import { pathExists, readJson, writeJson, writeText } from '../../shared/fs.js';
+import { debugLog } from '../../shared/debug.js';
 import { repoSlug } from '../../shared/paths.js';
 import { routeComment, type CommentEvent, type RoutedCommand } from '../controller/commentRouter.js';
 import { runDoctor } from './doctor.js';
@@ -66,6 +67,10 @@ function issueDaemonFlags(parsed: ParsedArgs): ParsedArgs['flags'] {
   return flagBool(parsed.flags, 'dry-run') ? { 'dry-run': true } : {};
 }
 
+function botFlag(parsed: ParsedArgs): string {
+  return flagString(parsed.flags, 'bot') ?? 'fixbot';
+}
+
 function daemonLog(message: string): void {
   process.stdout.write(`[${new Date().toISOString()}] ${message}\n`);
 }
@@ -86,19 +91,19 @@ export async function runCommand(parsed: ParsedArgs, cwd: string): Promise<strin
   return helpText;
 }
 
-async function routeCommentFile(parsed: ParsedArgs): Promise<string> {
+async function routeCommentFromFile(parsed: ParsedArgs): Promise<RoutedCommand> {
   const eventFile = parsed.positional[0];
   if (!eventFile) throw new Error(`Missing event JSON path.\n\n${helpText}`);
-  const botName = flagString(parsed.flags, 'bot') ?? 'fixbot';
-  const routed = routeComment(await readJson<CommentEvent>(eventFile), botName);
+  return routeComment(await readJson<CommentEvent>(eventFile), botFlag(parsed));
+}
+
+async function routeCommentFile(parsed: ParsedArgs): Promise<string> {
+  const routed = await routeCommentFromFile(parsed);
   return JSON.stringify(routed ?? null, null, 2) + '\n';
 }
 
 async function dispatchCommentFile(parsed: ParsedArgs, cwd: string): Promise<string> {
-  const eventFile = parsed.positional[0];
-  if (!eventFile) throw new Error(`Missing event JSON path.\n\n${helpText}`);
-  const botName = flagString(parsed.flags, 'bot') ?? 'fixbot';
-  const routed = routeComment(await readJson<CommentEvent>(eventFile), botName);
+  const routed = await routeCommentFromFile(parsed);
   if (!routed) return 'No bot command routed.\n';
   return dispatchRoutedCommand(routed, cwd, flagBool(parsed.flags, 'dry-run'));
 }
@@ -106,13 +111,15 @@ async function dispatchCommentFile(parsed: ParsedArgs, cwd: string): Promise<str
 async function pollComments(parsed: ParsedArgs, cwd: string): Promise<string> {
   const repo = parsed.positional[0];
   if (!repo) throw new Error(`Missing repo for poll-comments.\n\n${helpText}`);
-  const botName = flagString(parsed.flags, 'bot') ?? 'fixbot';
+  const botName = botFlag(parsed);
   const dryRun = flagBool(parsed.flags, 'dry-run');
   const stateFile = flagString(parsed.flags, 'state') ?? path.join(cwd, '.fixbot', 'poll-state', `${repoSlug(repo)}.json`);
   const state = await pathExists(stateFile) ? await readJson<PollState>(stateFile) : {};
   const since = flagString(parsed.flags, 'since') ?? state.since;
   const github = new GhCliClient(cwd);
+  debugLog(`poll-comments ${repo}: since=${since ?? 'none'} state=${stateFile}`);
   const comments = await github.listRecentIssueComments(repo, since);
+  debugLog(`poll-comments ${repo}: fetched ${comments.length} comment(s)`);
   const outputs: string[] = [];
   let newest = since;
   for (const comment of comments) {
@@ -124,6 +131,7 @@ async function pollComments(parsed: ParsedArgs, cwd: string): Promise<string> {
       issue: { number: comment.issueNumber },
       repository: { full_name: repo }
     }, botName);
+    debugLog(`comment on #${comment.issueNumber} by @${comment.author ?? 'unknown'}: ${routed ? `routed to ${routed.command}` : 'no bot command'}`);
     if (!routed) continue;
     const output = await dispatchRoutedCommand(routed, cwd, dryRun);
     outputs.push(`Dispatched ${routed.command} for ${repo}#${routed.ref.number}\n${output.trimEnd()}`);
@@ -143,16 +151,21 @@ function labelsForIssue(issue: RecentIssue, config: AutoLabelConfig): string[] {
   return Array.from(new Set(labels)).filter((label) => !existing.has(label));
 }
 
-function shouldAutoDispatch(issue: RecentIssue, plannedLabels: string[], config: AutoDispatchConfig): boolean {
-  if (!config.enabled) return false;
+// Returns a skip reason, or undefined when the issue should be auto-dispatched.
+function autoDispatchSkipReason(issue: RecentIssue, plannedLabels: string[], config: AutoDispatchConfig): string | undefined {
+  if (!config.enabled) return 'autoDispatch.enabled is false in .fixbot.json';
   const labels = new Set([...issue.labels.map((label) => label.name), ...plannedLabels]);
-  if (config.skipWhenLabels.some((label) => labels.has(label))) return false;
-  if (config.requireLabels.length > 0 && !config.requireLabels.some((label) => labels.has(label))) return false;
-  return true;
+  const skipLabel = config.skipWhenLabels.find((label) => labels.has(label));
+  if (skipLabel) return `has skip label "${skipLabel}"`;
+  if (config.requireLabels.length > 0 && !config.requireLabels.some((label) => labels.has(label)))
+    return `missing required label (one of: ${config.requireLabels.join(', ')})`;
+  return undefined;
 }
 
 function autoDispatchStartSummary(mode: AutoDispatchConfig['mode']): string {
-  return `Started auto-dispatched ${mode} job.`;
+  if (mode === 'fix') return 'Looking into this — will report back, with a PR if it pans out.';
+  if (mode === 'reproduce') return 'Looking into this — starting with a reproduction.';
+  return 'Looking into this — triage notes to follow.';
 }
 
 async function pollIssues(parsed: ParsedArgs, cwd: string): Promise<string> {
@@ -164,7 +177,9 @@ async function pollIssues(parsed: ParsedArgs, cwd: string): Promise<string> {
   const since = flagString(parsed.flags, 'since') ?? state.since;
   const config = await loadConfig(cwd);
   const github = new GhCliClient(cwd);
+  debugLog(`poll-issues ${repo}: since=${since ?? 'none'} state=${stateFile}`);
   const issues = await github.listRecentIssues(repo, since);
+  debugLog(`poll-issues ${repo}: fetched ${issues.length} issue(s)`);
   const outputs: string[] = [];
   let newest = since;
   let dispatched = 0;
@@ -172,11 +187,17 @@ async function pollIssues(parsed: ParsedArgs, cwd: string): Promise<string> {
     const timestamp = issue.updatedAt ?? issue.createdAt;
     if (timestamp && (!newest || Date.parse(timestamp) > Date.parse(newest))) newest = timestamp;
     const labels = labelsForIssue(issue, config.autoLabel);
+    debugLog(`saw ${repo}#${issue.number} (updated ${timestamp ?? 'unknown'})`);
     if (labels.length > 0) {
       if (!dryRun) await github.addLabels(repo, issue.number, labels);
       outputs.push(`${dryRun ? 'Would label' : 'Labeled'} ${repo}#${issue.number}: ${labels.join(', ')}`);
     }
-    if (dispatched < config.autoDispatch.maxPerPoll && shouldAutoDispatch(issue, labels, config.autoDispatch)) {
+    const skipReason = dispatched >= config.autoDispatch.maxPerPoll
+      ? `maxPerPoll (${config.autoDispatch.maxPerPoll}) reached this poll`
+      : autoDispatchSkipReason(issue, labels, config.autoDispatch);
+    if (skipReason) {
+      debugLog(`skipping auto-dispatch for ${repo}#${issue.number}: ${skipReason}`);
+    } else {
       dispatched += 1;
       const ref = `${repo}#${issue.number}`;
       if (dryRun) {
@@ -198,7 +219,7 @@ async function pollIssues(parsed: ParsedArgs, cwd: string): Promise<string> {
 async function runDaemon(parsed: ParsedArgs, cwd: string): Promise<string> {
   const repo = parsed.positional[0];
   if (!repo) throw new Error(`Missing repo for daemon.\n\n${helpText}`);
-  const botName = flagString(parsed.flags, 'bot') ?? 'fixbot';
+  const botName = botFlag(parsed);
   const commentsInterval = intervalMs(parsed.flags, 'comments-interval', 60);
   const issuesInterval = intervalMs(parsed.flags, 'issues-interval', 180);
   const once = flagBool(parsed.flags, 'once');
@@ -312,35 +333,126 @@ async function runFixLike(input: RunContext): Promise<string> {
     const prompt = renderRepairPrompt(job, profile);
     const files = await writeJobFiles(workspace.workspace, job, prompt);
     if (input.mode === 'prepare') return [`Prepared job ${job.id}`, `Workspace: ${workspace.workspace}`, `Job: ${files.jobFile}`, `Prompt: ${files.promptFile}`].join('\n') + '\n';
-    await postStatusComment(github, { repo: job.repo, number: job.issueNumber, status: 'started', summary: startSummary ?? `Started ${input.mode} job ${job.id}.`, ...statusLabelInput(config, 'started'), dryRun });
+    // Opener only — no label lifecycle at start. Terminal transitions (pr-opened/triaged/blocked)
+    // clear stale status labels themselves via their removeLabels list.
+    await postStatusComment(github, { repo: job.repo, number: job.issueNumber, status: 'started', summary: startSummary ?? 'Taking a look at this now.', dryRun });
+    // Semantic labels land with the opener, not at the end of the run: a quick
+    // labeling-only agent call classifies the issue before the main job runs.
+    // Both agent children (labeler + main run) register their PID so `stop` can kill them
+    // and stale-lock reclaim sees a live child even if the wrapper dies mid-phase.
+    let labelerSpawned = false;
+    const trackSpawn = async (pid: number) => {
+      labelerSpawned = true;
+      await recordRunningJob(input.cwd, { repo: job.repo, number: job.issueNumber, jobId: job.id, pid, startedAt: new Date().toISOString() });
+    };
+    if (autoDispatched && !prModes.has(input.mode) && !dryRun) {
+      daemonLog(await quickLabelIssue(github, config.agent, workspace.workspace, job.repo, job.issueNumber, issue, trackSpawn));
+      // `stop` SIGTERMs the tracked child and clears its running record. A spawned
+      // labeler whose record is gone means the job was stopped: do not start the main agent.
+      const stillTracked = await readRunningJob(input.cwd, job.repo, job.issueNumber);
+      await clearRunningJob(input.cwd, job.repo, job.issueNumber);
+      if (labelerSpawned && !stillTracked) return `Job stopped during labeling for ${job.repo}#${job.issueNumber}.\n`;
+    }
     const runner = dryRun ? new NoopAgentRunner() : new CommandAgentRunner(config.agent);
     const run = await runner.run({
       cwd: workspace.workspace,
       promptFile: files.promptFile,
-      onSpawn: async (pid) => recordRunningJob(input.cwd, { repo: job.repo, number: job.issueNumber, jobId: job.id, pid, startedAt: new Date().toISOString() })
+      onSpawn: trackSpawn
     });
     await clearRunningJob(input.cwd, job.repo, job.issueNumber);
     if (run.exitCode !== 0) {
-      await postStatusComment(github, { repo: job.repo, number: job.issueNumber, status: 'blocked', summary: `Agent failed for ${input.mode} job ${job.id}.`, details: [run.stderr || run.stdout], ...statusLabelInput(config, 'blocked'), dryRun });
+      await postStatusComment(github, { repo: job.repo, number: job.issueNumber, status: 'blocked', summary: `Hit a blocker on the ${input.mode} run:`, details: [run.stderr || run.stdout], ...statusLabelInput(config, 'blocked'), dryRun });
       return [`Agent failed: ${run.command}`, run.stderr || run.stdout].join('\n') + '\n';
     }
     if (input.mode === 'reproduce') return finishReproduction(workspace.workspace, profile, github, config, job.repo, job.issueNumber, dryRun);
     const commentArtifact = commentOnlyArtifacts[input.mode];
     if (commentArtifact) {
+      const labelNote = input.mode === 'triage' ? await applyAgentLabels(github, workspace.workspace, job.repo, job.issueNumber, dryRun) : undefined;
+      if (labelNote) daemonLog(labelNote);
       const body = await publishArtifactComment(github, workspace.workspace, job.repo, job.issueNumber, commentArtifact.file, commentArtifact.fallback, dryRun);
-      await postStatusComment(github, { repo: job.repo, number: job.issueNumber, status: commentArtifact.status, summary: `${input.mode} completed for job ${job.id}.`, ...statusLabelInput(config, commentArtifact.status), dryRun });
+      // The artifact comment IS the completion message; only the label lifecycle runs here.
+      await applyStatusLabels(github, { repo: job.repo, number: job.issueNumber, ...statusLabelInput(config, commentArtifact.status), dryRun });
       return [`Agent finished: ${run.command}`, run.stdout.trim(), `Comment artifact: ${commentArtifact.file}`, `Comment body length: ${body.length}`, `Workspace: ${workspace.workspace}`].filter(Boolean).join('\n') + '\n';
+    }
+    // Roboomp-style progressive updates: a short findings comment lands on the issue before the PR link.
+    if (await pathExists(path.join(workspace.workspace, '.fixbot', 'findings.md'))) {
+      await publishArtifactComment(github, workspace.workspace, job.repo, job.issueNumber, '.fixbot/findings.md', '', dryRun);
     }
     const pr = await publishRepair(workspace.workspace, job, github, { dryRun, continueExisting: Boolean(existingPullRequest?.headRefName) });
     if (input.mode === 'address-review' && !dryRun) await resolveReviewThreadsFromArtifact(github, workspace.workspace, job.repo);
     if (pr) {
       const status = input.mode === 'address-review' ? 'review-addressed' : 'pr-opened';
-      await postStatusComment(github, { repo: job.repo, number: job.issueNumber, status, summary: `${input.mode} completed: ${pr.url}`, ...statusLabelInput(config, status), dryRun });
+      const summary = status === 'review-addressed' ? `Addressed the review feedback in ${pr.url}.` : `Fix up at ${pr.url}.`;
+      await postStatusComment(github, { repo: job.repo, number: job.issueNumber, status, summary, ...statusLabelInput(config, status), dryRun });
+    } else if (input.mode === 'fix') {
+      // No diff means findings-only. Mark the issue triaged so the bot's own comment bumping
+      // updatedAt does not auto-dispatch the same no-op job forever.
+      await applyStatusLabels(github, { repo: job.repo, number: job.issueNumber, ...statusLabelInput(config, 'triaged'), dryRun });
     }
     return [`Agent finished: ${run.command}`, run.stdout.trim(), pr ? `PR: ${pr.url}` : 'No diff to publish', `Workspace: ${workspace.workspace}`].filter(Boolean).join('\n') + '\n';
   } finally {
     await releaseJobLock(lock);
   }
+}
+
+// Enforces the label contract shape: at most one priority, one type, three area labels.
+function sanitizeIssueLabels(raw: unknown): string[] {
+  const typeLabels = ['bug', 'enhancement', 'documentation', 'question'];
+  const sanitized = Array.from(new Set((Array.isArray(raw) ? raw : [])
+    .filter((label): label is string => typeof label === 'string')
+    .map((label) => label.trim().toLowerCase())
+    .filter((label) => /^[a-z0-9][a-z0-9:-]{0,29}$/.test(label))));
+  const priority = sanitized.find((label) => /^p[0-3]$/.test(label));
+  const type = sanitized.find((label) => typeLabels.includes(label));
+  const areas = sanitized.filter((label) => !/^p[0-3]$/.test(label) && !typeLabels.includes(label)).slice(0, 3);
+  return [priority, type, ...areas].filter((label): label is string => label !== undefined);
+}
+
+// Quick labeling-only agent call at dispatch time; labels land alongside the opener comment.
+// Best-effort: any failure returns a note and the main job proceeds unlabeled.
+async function quickLabelIssue(github: GitHubClient, agent: { command: string; args: string[]; timeoutSeconds: number }, workspace: string, repo: string, number: number, issue: IssueContext, onSpawn: (pid: number) => Promise<void>): Promise<string> {
+  const promptFile = path.join(workspace, '.fixbot', 'label-prompt.md');
+  const prompt = [
+    'Classify this GitHub issue with labels. Respond with ONLY a JSON object, no prose, shaped:',
+    '{ "labels": ["bug", "p1"] }',
+    'Rules: include exactly one priority label from p0 (critical) / p1 (high) / p2 (normal) / p3 (low); include one type label (bug, enhancement, documentation, question); optionally add up to 3 short lowercase area labels (e.g. cli, auth, ci). Lowercase, max 30 chars each.',
+    '',
+    `# Issue: ${issue.title}`,
+    '',
+    issue.body
+  ].join('\n');
+  try {
+    await writeText(promptFile, prompt);
+    // ponytail: reuse the configured agent with a tight cap; labeling should take seconds, not the fix budget
+    const runner = new CommandAgentRunner({ ...agent, timeoutSeconds: Math.min(agent.timeoutSeconds, 300) });
+    const run = await runner.run({ cwd: workspace, promptFile, onSpawn });
+    if (run.exitCode !== 0) return `quick-label agent failed: ${(run.stderr || run.stdout).slice(0, 200)}`;
+    const json = run.stdout.match(/\{[\s\S]*?"labels"[\s\S]*?\}/g)?.at(-1);
+    if (!json) return 'quick-label: no labels JSON in agent output; skipping.';
+    const labels = sanitizeIssueLabels((JSON.parse(json) as { labels?: unknown }).labels);
+    if (labels.length === 0) return 'quick-label: no valid labels; skipping.';
+    await github.addLabels(repo, number, labels);
+    return `Labeled ${repo}#${number}: ${labels.join(', ')}`;
+  } catch (error) {
+    return `quick-label failed: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+// Reads agent-written .fixbot/labels.json and applies sanitized labels to the issue.
+async function applyAgentLabels(github: GitHubClient, workspace: string, repo: string, number: number, dryRun: boolean): Promise<string | undefined> {
+  const file = path.join(workspace, '.fixbot', 'labels.json');
+  if (!(await pathExists(file))) return 'Agent wrote no labels.json; skipping labels.';
+  let raw: { labels?: unknown };
+  try {
+    raw = await readJson<{ labels?: unknown }>(file);
+  } catch {
+    return 'labels.json is not valid JSON; skipping labels.';
+  }
+  const labels = sanitizeIssueLabels(raw.labels);
+  if (labels.length === 0) return 'labels.json had no valid labels; skipping.';
+  if (dryRun) return `Would label ${repo}#${number}: ${labels.join(', ')}`;
+  await github.addLabels(repo, number, labels);
+  return `Labeled ${repo}#${number}: ${labels.join(', ')}`;
 }
 
 async function finishReproduction(workspace: string, profile: ProjectProfile, github: GitHubClient, config: { policy: { statusLabels: Partial<Record<string, string>> } }, repo: string, number: number, dryRun: boolean): Promise<string> {
