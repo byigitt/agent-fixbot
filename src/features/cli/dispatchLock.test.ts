@@ -47,6 +47,40 @@ test('same-ref job lock gates dispatch', async (t) => {
       await releaseJobLock(lock);
     });
 
+    await t.test('a stale lock from a dead process is stolen; a live one is not', async () => {
+      const dir = join(cwd, '.fixbot', 'locks', 'acme-widgets');
+      await mkdir(dir, { recursive: true });
+      // Dead holder: pid that cannot exist.
+      await writeFile(join(dir, '12.json'), JSON.stringify({ repo: 'acme/widgets', number: 12, jobId: 'crashed', createdAt: new Date(0).toISOString(), pid: 2 ** 30 }));
+      const stolen = await acquireJobLock(cwd, 'acme/widgets', 12, 'reclaimer');
+      assert.ok(stolen, 'a lock whose pid is dead must be reclaimable');
+      await releaseJobLock(stolen);
+      // Legacy lock without pid: also treated as stale.
+      await writeFile(join(dir, '12.json'), JSON.stringify({ repo: 'acme/widgets', number: 12, jobId: 'legacy', createdAt: new Date(0).toISOString() }));
+      const legacy = await acquireJobLock(cwd, 'acme/widgets', 12, 'reclaimer');
+      assert.ok(legacy, 'a pid-less legacy lock must be reclaimable');
+      // Live holder (this test process): must NOT be stolen.
+      assert.equal(await acquireJobLock(cwd, 'acme/widgets', 12, 'rival'), undefined);
+      await releaseJobLock(legacy);
+    });
+
+    await t.test('a dead-wrapper lock with a live agent child is not stolen', async () => {
+      const lockDir = join(cwd, '.fixbot', 'locks', 'acme-widgets');
+      const runningDir = join(cwd, '.fixbot', 'running');
+      await mkdir(lockDir, { recursive: true });
+      await mkdir(runningDir, { recursive: true });
+      // Wrapper crashed (dead pid) but its spawned agent (this test process's pid) is still alive.
+      await writeFile(join(lockDir, '12.json'), JSON.stringify({ repo: 'acme/widgets', number: 12, jobId: 'crashed-wrapper', createdAt: new Date(0).toISOString(), pid: 2 ** 30 }));
+      await writeFile(join(runningDir, 'acme-widgets-12.json'), JSON.stringify({ repo: 'acme/widgets', number: 12, jobId: 'crashed-wrapper', pid: process.pid, startedAt: new Date(0).toISOString() }));
+      assert.equal(await acquireJobLock(cwd, 'acme/widgets', 12, 'rival'), undefined, 'a live agent child must keep the lock held');
+      // Agent finished too (dead child pid): now the lock is genuinely stale.
+      await writeFile(join(runningDir, 'acme-widgets-12.json'), JSON.stringify({ repo: 'acme/widgets', number: 12, jobId: 'crashed-wrapper', pid: 2 ** 30, startedAt: new Date(0).toISOString() }));
+      const reclaimed = await acquireJobLock(cwd, 'acme/widgets', 12, 'reclaimer');
+      assert.ok(reclaimed, 'a dead wrapper with a dead agent must be reclaimable');
+      await releaseJobLock(reclaimed);
+      await rm(join(runningDir, 'acme-widgets-12.json'), { force: true });
+    });
+
     await t.test('a finished dispatch releases the lock for the next run', async () => {
       const first = await runCommand(args('fix', ['acme/widgets#12'], { 'dry-run': true }), cwd);
       assert.ok(first.includes('Agent finished: noop-agent'), first);
