@@ -28,6 +28,8 @@ export type AutoDispatchConfig = {
 export type GitConfig = {
   authorName: string;
   authorEmail: string;
+  // "Name <email>" entries appended as Co-authored-by trailers on published commits.
+  coAuthors: string[];
 };
 
 export type PolicyConfig = {
@@ -83,7 +85,8 @@ export const defaultConfig: FixbotConfig = {
   },
   git: {
     authorName: 'fixbot',
-    authorEmail: 'fixbot@users.noreply.github.com'
+    authorEmail: 'fixbot@users.noreply.github.com',
+    coAuthors: []
   },
   policy: {
     requireHumanReview: true,

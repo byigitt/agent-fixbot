@@ -47,7 +47,11 @@ export async function publishRepair(workspace: string, job: RepairJob, github: G
   // Stage exactly the guard-approved files; never a blanket `add .` that could pull artifacts in.
   const add = await execFile('git', ['add', '-A', '--', ...guard.changedFiles], { cwd: workspace });
   if (add.exitCode !== 0) throw new Error(add.stderr || 'git add failed');
-  const commit = await execFile('git', [...commitAuthorArgs(job), 'commit', '-m', pr.title], { cwd: workspace });
+  // Trailers must live in ONE final paragraph — separate -m args insert blank lines,
+  // and Git/GitHub only parse the last blank-line-delimited block as trailers.
+  const trailers = job.config.git.coAuthors.map((author) => `Co-authored-by: ${author}`).join('\n');
+  const coAuthorArgs = trailers ? ['-m', trailers] : [];
+  const commit = await execFile('git', [...commitAuthorArgs(job), 'commit', '-m', pr.title, ...coAuthorArgs], { cwd: workspace });
   if (commit.exitCode !== 0) throw new Error(commit.stderr || 'git commit failed');
   const pushRef = options.continueExisting && job.existingPullRequest?.headRefName ? `HEAD:${job.existingPullRequest.headRefName}` : job.branch;
   const push = await execFile('git', ['push', '-u', 'origin', pushRef], { cwd: workspace });
