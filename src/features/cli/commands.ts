@@ -20,6 +20,7 @@ import { preparePullRequestWorkspace, prepareWorkspace } from '../workspaces/wor
 import { profileProject, type ProjectProfile } from '../reproduction/projectProfiler.js';
 import { runReproductionPlan, writeReproductionReport } from '../reproduction/reproductionRunner.js';
 import { pathExists, readJson, writeJson, writeText } from '../../shared/fs.js';
+import { execFile } from '../../shared/exec.js';
 import { debugLog } from '../../shared/debug.js';
 import { repoSlug } from '../../shared/paths.js';
 import { routeComment, type CommentEvent, type RoutedCommand } from '../controller/commentRouter.js';
@@ -82,6 +83,7 @@ export async function runCommand(parsed: ParsedArgs, cwd: string): Promise<strin
   if (parsed.command === 'dispatch-comment') return dispatchCommentFile(parsed, cwd);
   if (parsed.command === 'poll-comments') return pollComments(parsed, cwd);
   if (parsed.command === 'poll-issues') return pollIssues(parsed, cwd);
+  if (parsed.command === 'poll-reviews') return pollReviews(parsed, cwd);
   if (parsed.command === 'daemon' || parsed.command === 'watch') return runDaemon(parsed, cwd);
   if (parsed.command === 'stop') return stopCommand(parsed, cwd);
   if (parsed.command === 'prepare' || parsed.command === 'fix' || parsed.command === 'reproduce' || parsed.command === 'triage' || parsed.command === 'review' || parsed.command === 'fix-ci' || parsed.command === 'address-review') {
@@ -216,6 +218,80 @@ async function pollIssues(parsed: ParsedArgs, cwd: string): Promise<string> {
   return outputs.length > 0 ? outputs.join('\n') + '\n' : 'No issues labeled or dispatched.\n';
 }
 
+type ReviewPollState = { prs?: Record<string, string> };
+
+// Open PRs owned by the bot (author or fixbot/ branch), the ones a review loop can update.
+async function listOpenBotPrNumbers(repo: string, botName: string, cwd: string): Promise<number[]> {
+  const result = await execFile('gh', ['pr', 'list', '--repo', repo, '--state', 'open', '--json', 'number,author,headRefName'], { cwd, timeoutSeconds: 120 });
+  if (result.exitCode !== 0) return [];
+  const prs = JSON.parse(result.stdout) as { number?: number; author?: { login?: string }; headRefName?: string }[];
+  return prs
+    .filter((pr) => pr.number !== undefined && (pr.author?.login === botName || (pr.headRefName ?? '').startsWith('fixbot/')))
+    .map((pr) => pr.number as number);
+}
+
+// Newest non-bot review activity (submitted reviews + inline comments) on a PR.
+async function latestReviewActivity(repo: string, number: number, botName: string, cwd: string): Promise<string | undefined> {
+  const repoParts = repo.split('/');
+  const base = `repos/${repoParts[0]}/${repoParts[1]}/pulls/${number}`;
+  const [reviews, comments] = await Promise.all([
+    execFile('gh', ['api', '--method', 'GET', `${base}/reviews`, '-f', 'per_page=100'], { cwd, timeoutSeconds: 120 }),
+    execFile('gh', ['api', '--method', 'GET', `${base}/comments`, '-f', 'per_page=100'], { cwd, timeoutSeconds: 120 })
+  ]);
+  const timestamps: number[] = [];
+  if (reviews.exitCode === 0) {
+    for (const review of JSON.parse(reviews.stdout) as { user?: { login?: string }; state?: string; body?: string; submitted_at?: string }[]) {
+      if (review.user?.login === botName || !review.submitted_at) continue;
+      // Only actionable feedback counts: approvals and empty reviews must not restart the loop.
+      const actionable = review.state === 'CHANGES_REQUESTED' || (review.state === 'COMMENTED' && (review.body ?? '').trim().length > 0);
+      if (actionable) timestamps.push(Date.parse(review.submitted_at));
+    }
+  }
+  if (comments.exitCode === 0) {
+    for (const comment of JSON.parse(comments.stdout) as { user?: { login?: string }; body?: string; updated_at?: string }[]) {
+      if (comment.user?.login !== botName && (comment.body ?? '').trim().length > 0 && comment.updated_at) timestamps.push(Date.parse(comment.updated_at));
+    }
+  }
+  const latest = timestamps.filter(Number.isFinite).sort((a, b) => b - a)[0];
+  return latest === undefined ? undefined : new Date(latest).toISOString();
+}
+
+// Review loop: new human/agent review activity on an open bot PR auto-dispatches
+// address-review, which commits follow-ups onto the same PR branch (roboomp-style).
+async function pollReviews(parsed: ParsedArgs, cwd: string): Promise<string> {
+  const repo = parsed.positional[0];
+  if (!repo) throw new Error(`Missing repo for poll-reviews.\n\n${helpText}`);
+  const botName = botFlag(parsed);
+  const dryRun = flagBool(parsed.flags, 'dry-run');
+  const config = await loadConfig(cwd);
+  if (!config.autoDispatch.enabled) return 'autoDispatch.enabled is false; review loop off.\n';
+  const stateFile = flagString(parsed.flags, 'state') ?? path.join(cwd, '.fixbot', 'review-state', `${repoSlug(repo)}.json`);
+  const state: ReviewPollState = await pathExists(stateFile) ? await readJson<ReviewPollState>(stateFile) : {};
+  const prs = state.prs ?? {};
+  const outputs: string[] = [];
+  for (const number of await listOpenBotPrNumbers(repo, botName, cwd)) {
+    const latest = await latestReviewActivity(repo, number, botName, cwd);
+    if (!latest) continue;
+    // A bot PR starts review-free, so any non-bot activity newer than the cursor is fresh feedback.
+    const seen = prs[String(number)];
+    if (seen && Date.parse(latest) <= Date.parse(seen)) continue;
+    if (dryRun) {
+      outputs.push(`Would address review feedback on ${repo}#${number} (activity ${latest})`);
+      continue;
+    }
+    const output = await runCommand({
+      command: 'address-review',
+      positional: [`${repo}#${number}`],
+      flags: { 'start-summary': 'New review feedback — on it.', 'auto-dispatched': true }
+    }, cwd);
+    // Keep the cursor when the ref is locked so the feedback is retried next poll.
+    if (!output.includes('Job already running')) prs[String(number)] = latest;
+    outputs.push(`Auto-dispatched address-review for ${repo}#${number}\n${output.trimEnd()}`);
+  }
+  if (!dryRun) await writeJson(stateFile, { prs });
+  return outputs.length > 0 ? outputs.join('\n') + '\n' : 'No new review activity.\n';
+}
+
 async function runDaemon(parsed: ParsedArgs, cwd: string): Promise<string> {
   const repo = parsed.positional[0];
   if (!repo) throw new Error(`Missing repo for daemon.\n\n${helpText}`);
@@ -243,6 +319,12 @@ async function runDaemon(parsed: ParsedArgs, cwd: string): Promise<string> {
           daemonLog(`poll-comments failed: ${error instanceof Error ? error.message : String(error)}`);
         }
         schedule.commentsNextAt = Date.now() + commentsInterval;
+        try {
+          const reviews = await runCommand({ command: 'poll-reviews', positional: [repo], flags: daemonFlags(parsed, botName) }, cwd);
+          if (!reviews.startsWith('No new review activity')) daemonLog(reviews.trimEnd());
+        } catch (error) {
+          daemonLog(`poll-reviews failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
       if (stopping) break;
       if (now >= schedule.issuesNextAt) {
@@ -333,11 +415,6 @@ async function runFixLike(input: RunContext): Promise<string> {
     const prompt = renderRepairPrompt(job, profile);
     const files = await writeJobFiles(workspace.workspace, job, prompt);
     if (input.mode === 'prepare') return [`Prepared job ${job.id}`, `Workspace: ${workspace.workspace}`, `Job: ${files.jobFile}`, `Prompt: ${files.promptFile}`].join('\n') + '\n';
-    // Opener only — no label lifecycle at start. Terminal transitions (pr-opened/triaged/blocked)
-    // clear stale status labels themselves via their removeLabels list.
-    await postStatusComment(github, { repo: job.repo, number: job.issueNumber, status: 'started', summary: startSummary ?? 'Taking a look at this now.', dryRun });
-    // Semantic labels land with the opener, not at the end of the run: a quick
-    // labeling-only agent call classifies the issue before the main job runs.
     // Both agent children (labeler + main run) register their PID so `stop` can kill them
     // and stale-lock reclaim sees a live child even if the wrapper dies mid-phase.
     let labelerSpawned = false;
@@ -345,14 +422,22 @@ async function runFixLike(input: RunContext): Promise<string> {
       labelerSpawned = true;
       await recordRunningJob(input.cwd, { repo: job.repo, number: job.issueNumber, jobId: job.id, pid, startedAt: new Date().toISOString() });
     };
+    // The quick agent call runs FIRST: it classifies the issue (labels) and writes the opener
+    // in its own words, so the first visible comment is agent-authored, not a canned template.
+    let opener = startSummary ?? 'Taking a look at this now.';
     if (autoDispatched && !prModes.has(input.mode) && !dryRun) {
-      daemonLog(await quickLabelIssue(github, config.agent, workspace.workspace, job.repo, job.issueNumber, issue, trackSpawn));
+      const quick = await quickLabelIssue(github, config.agent, workspace.workspace, job.repo, job.issueNumber, issue, trackSpawn);
+      daemonLog(quick.note);
       // `stop` SIGTERMs the tracked child and clears its running record. A spawned
       // labeler whose record is gone means the job was stopped: do not start the main agent.
       const stillTracked = await readRunningJob(input.cwd, job.repo, job.issueNumber);
       await clearRunningJob(input.cwd, job.repo, job.issueNumber);
       if (labelerSpawned && !stillTracked) return `Job stopped during labeling for ${job.repo}#${job.issueNumber}.\n`;
+      if (quick.opener) opener = quick.opener;
     }
+    // Opener only — no label lifecycle at start. Terminal transitions (pr-opened/triaged/blocked)
+    // clear stale status labels themselves via their removeLabels list.
+    await postStatusComment(github, { repo: job.repo, number: job.issueNumber, status: 'started', summary: opener, dryRun });
     const runner = dryRun ? new NoopAgentRunner() : new CommandAgentRunner(config.agent);
     const run = await runner.run({
       cwd: workspace.workspace,
@@ -410,12 +495,25 @@ function sanitizeIssueLabels(raw: unknown): string[] {
 
 // Quick labeling-only agent call at dispatch time; labels land alongside the opener comment.
 // Best-effort: any failure returns a note and the main job proceeds unlabeled.
-async function quickLabelIssue(github: GitHubClient, agent: { command: string; args: string[]; timeoutSeconds: number }, workspace: string, repo: string, number: number, issue: IssueContext, onSpawn: (pid: number) => Promise<void>): Promise<string> {
+// Existing repo labels, so the labeler reuses them instead of inventing near-duplicates
+// (e.g. adding "documentation" when the repo already has "docs"). Best-effort.
+async function listRepoLabels(repo: string, cwd: string): Promise<string[]> {
+  const result = await execFile('gh', ['label', 'list', '--repo', repo, '--limit', '100', '--json', 'name', '--jq', '.[].name'], { cwd });
+  if (result.exitCode !== 0) return [];
+  return result.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
+}
+
+async function quickLabelIssue(github: GitHubClient, agent: { command: string; args: string[]; timeoutSeconds: number }, workspace: string, repo: string, number: number, issue: IssueContext, onSpawn: (pid: number) => Promise<void>): Promise<{ note: string; opener?: string }> {
   const promptFile = path.join(workspace, '.fixbot', 'label-prompt.md');
+  const existing = await listRepoLabels(repo, workspace);
   const prompt = [
-    'Classify this GitHub issue with labels. Respond with ONLY a JSON object, no prose, shaped:',
-    '{ "labels": ["bug", "p1"] }',
-    'Rules: include exactly one priority label from p0 (critical) / p1 (high) / p2 (normal) / p3 (low); include one type label (bug, enhancement, documentation, question); optionally add up to 3 short lowercase area labels (e.g. cli, auth, ci). Lowercase, max 30 chars each.',
+    'You are a maintainer bot triaging a newly opened GitHub issue. Respond with ONLY a JSON object, no prose, shaped:',
+    '{ "labels": ["bug", "p1"], "opener": "one short sentence" }',
+    'Label rules: include exactly one priority label from p0 (critical) / p1 (high) / p2 (normal) / p3 (low); include one type label (bug, enhancement, documentation, question); optionally add up to 3 short lowercase area labels (e.g. cli, auth, ci). Lowercase, max 30 chars each.',
+    existing.length > 0
+      ? `Existing repo labels: ${existing.join(', ')}. Reuse an existing label whenever one fits the meaning (never create a near-duplicate like "documentation" next to "docs"); invent a new area label only when nothing existing matches.`
+      : '',
+    'Opener rules: one casual first-person sentence, posted as the first comment on the issue, saying you are picking this up and will follow up (with a PR if the change pans out). Vary the wording naturally — never a template phrase. Reference the specific issue topic. Write it in the language the issue is written in. No emojis, no sign-off.',
     '',
     `# Issue: ${issue.title}`,
     '',
@@ -426,15 +524,18 @@ async function quickLabelIssue(github: GitHubClient, agent: { command: string; a
     // ponytail: reuse the configured agent with a tight cap; labeling should take seconds, not the fix budget
     const runner = new CommandAgentRunner({ ...agent, timeoutSeconds: Math.min(agent.timeoutSeconds, 300) });
     const run = await runner.run({ cwd: workspace, promptFile, onSpawn });
-    if (run.exitCode !== 0) return `quick-label agent failed: ${(run.stderr || run.stdout).slice(0, 200)}`;
+    if (run.exitCode !== 0) return { note: `quick-label agent failed: ${(run.stderr || run.stdout).slice(0, 200)}` };
     const json = run.stdout.match(/\{[\s\S]*?"labels"[\s\S]*?\}/g)?.at(-1);
-    if (!json) return 'quick-label: no labels JSON in agent output; skipping.';
-    const labels = sanitizeIssueLabels((JSON.parse(json) as { labels?: unknown }).labels);
-    if (labels.length === 0) return 'quick-label: no valid labels; skipping.';
+    if (!json) return { note: 'quick-label: no labels JSON in agent output; skipping.' };
+    const parsed = JSON.parse(json) as { labels?: unknown; opener?: unknown };
+    const rawOpener = typeof parsed.opener === 'string' ? parsed.opener.replace(/\s+/g, ' ').trim().slice(0, 300) : '';
+    const opener = rawOpener.length > 0 ? { opener: rawOpener } : {};
+    const labels = sanitizeIssueLabels(parsed.labels);
+    if (labels.length === 0) return { note: 'quick-label: no valid labels; skipping.', ...opener };
     await github.addLabels(repo, number, labels);
-    return `Labeled ${repo}#${number}: ${labels.join(', ')}`;
+    return { note: `Labeled ${repo}#${number}: ${labels.join(', ')}`, ...opener };
   } catch (error) {
-    return `quick-label failed: ${error instanceof Error ? error.message : String(error)}`;
+    return { note: `quick-label failed: ${error instanceof Error ? error.message : String(error)}` };
   }
 }
 
