@@ -97,7 +97,7 @@ test('renderRepairPrompt in reproduce mode states the reproduction-only rule', (
 test('renderRepairPrompt outside reproduce mode keeps the fix result contract', () => {
   const prompt = renderRepairPrompt(makeJob([]));
   assert.ok(prompt.includes('.fixbot/result.md'));
-  assert.ok(prompt.includes('## PR Body'));
+  assert.ok(prompt.includes('.fixbot/pr.md'), 'fix contract asks for the agent-authored PR title/body artifact');
   assert.ok(!prompt.includes('.fixbot/reproduction.json'));
   assert.ok(!prompt.includes('Phase 1 is reproduction-only'));
 });
@@ -174,7 +174,7 @@ test('renderRepairPrompt in fix mode keeps the repair contract free of parity ar
   const prompt = renderRepairPrompt(makeJob([], { mode: 'fix' }));
   assert.ok(prompt.includes('Mode: fix\n'));
   assert.ok(prompt.includes('.fixbot/result.md'));
-  assert.ok(prompt.includes('## PR Body'));
+  assert.ok(prompt.includes('.fixbot/pr.md'));
   assert.ok(!prompt.includes('.fixbot/triage.md'));
   assert.ok(!prompt.includes('.fixbot/review.md'));
   assert.ok(!prompt.includes('.fixbot/reproduction.json'));
