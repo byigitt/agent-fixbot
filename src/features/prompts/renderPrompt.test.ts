@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { renderRepairPrompt } from './renderPrompt.js';
 import type { ProjectProfile } from '../reproduction/projectProfiler.js';
-import { externalReproPolicy } from './externalPolicy.js';
 import { defaultConfig } from '../config/config.js';
 import type { RepairJob } from '../jobs/job.js';
 
@@ -31,7 +30,9 @@ function makeJob(comments: string[], overrides: Partial<RepairJob> = {}): Repair
 
 test('renderRepairPrompt embeds the external reproduction policy', () => {
   const prompt = renderRepairPrompt(makeJob([]));
-  assert.ok(prompt.includes(externalReproPolicy), 'prompt must contain the external reproduction policy block');
+  assert.ok(prompt.includes('# External Reproduction Policy'), 'prompt must contain the external reproduction policy block');
+  assert.ok(prompt.includes('Do not hit live external services unless the job explicitly allows it.'));
+  assert.ok(prompt.includes('If live reproduction is impossible, add a contract regression test and state the limitation.'));
 });
 
 test('renderRepairPrompt surfaces the job routing facts', () => {
