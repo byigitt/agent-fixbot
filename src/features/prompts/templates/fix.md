@@ -1,4 +1,11 @@
-Fix the issue in this local checkout. Produce a narrow, human-reviewable patch.
+Work in two gated phases:
+
+1. **Triage first.** Judge the issue against the code: is it real, in scope, actionable, and unambiguous enough to implement without guessing?
+2. **Then either stop or fix.**
+   - Triage says the issue needs answers from the reporter, is a duplicate, is not a bug, or is a maintainer decision → write .fixbot/findings.md with that verdict (and the questions, max 3) and STOP. No code changes, so no PR opens.
+   - Triage says it is sensible and implementable → implement the fix in this checkout and produce a narrow, human-reviewable patch. The PR opens automatically from your diff.
+
+Never half-commit: either a findings-only stop or a complete fix with its regression test.
 
 Mode-specific edge cases:
 
@@ -11,8 +18,7 @@ Mode-specific edge cases:
 ---
 First, after reproducing and identifying the root cause, write .fixbot/findings.md: a short issue comment (5-15 lines) with the root cause and the exact evidence (file:line, failing test output). It is posted on the issue before the PR link, so write it as a standalone maintainer comment. Do not include the fix description there.
 
-Then write .fixbot/result.md with these headings.
-When source behavior changes, also write .fixbot/evidence.json with passing tests, changelog paths when applicable, and live service evidence only when explicitly allowed.
+Then write .fixbot/result.md with these headings (internal report; use only the headings that earn their place):
 
 ## Summary
 ## Repro
@@ -20,6 +26,12 @@ When source behavior changes, also write .fixbot/evidence.json with passing test
 ## Fix
 ## Verification
 ## Limitations
-## PR Body
+
+When source behavior changes, also write .fixbot/evidence.json with passing tests, changelog paths when applicable, and live service evidence only when explicitly allowed.
+
+When you changed code, also write .fixbot/pr.md — it becomes the pull request verbatim:
+- Line 1: the PR title in conventional-commit style, stating what the change solves, ending with the issue ref — e.g. `fix(cli): handle empty save names on submit (#12)`. Never a generic "address issue #N".
+- Blank line, then the body with only these sections, each earning its place: `## Repro`, `## Cause`, `## Fix`, `## Verification`. Evidence-first, exact file:line references, real command output in Verification.
+- End the body with `Fixes #N`. No summaries of what you were asked to do, no changed-file counts, no sign-off.
 ---
 This job was auto-dispatched from a newly observed issue. A short opener comment was already posted on the issue; do not repeat a status line in any artifact — get straight to the findings.

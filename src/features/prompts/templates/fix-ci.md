@@ -8,8 +8,7 @@ Mode-specific edge cases:
 - **Never** disable, skip, retry-loop, or delete a failing test to get green; fix the cause or report why it cannot be fixed here.
 - **Multiple failing checks**: fix what shares one root cause; list remaining failures with their distinct causes rather than one mega-patch.
 ---
-Write .fixbot/result.md with these headings.
-When source behavior changes, also write .fixbot/evidence.json with passing tests, changelog paths when applicable, and live service evidence only when explicitly allowed.
+Write .fixbot/result.md with these headings (internal report):
 
 ## Summary
 ## CI Failure
@@ -17,4 +16,7 @@ When source behavior changes, also write .fixbot/evidence.json with passing test
 ## Fix
 ## Verification
 ## Limitations
-## PR Body
+
+When source behavior changes, also write .fixbot/evidence.json with passing tests, changelog paths when applicable, and live service evidence only when explicitly allowed.
+
+When you changed code, also write .fixbot/pr.md (it becomes the pull request verbatim): line 1 is a conventional-commit title stating what the change solves with the issue/PR ref (never "address issue #N"), then a blank line, then a body of only `## Repro`, `## Cause`, `## Fix`, `## Verification` sections that earn their place, ending with `Fixes #N`.
