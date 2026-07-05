@@ -43,6 +43,27 @@ function commentBody(prefix: string, body: string | undefined, author?: string):
   return author ? `${prefix} by @${author}\n\n${trimmed}` : `${prefix}\n\n${trimmed}`;
 }
 
+// Colors/descriptions for labels the bot creates on the fly. Priority scale runs red -> green;
+// type labels use GitHub's default-label colors so they look native; unknown area labels get a neutral blue.
+const labelStyles: Record<string, { color: string; description: string }> = {
+  p0: { color: 'b60205', description: 'Critical: drop everything' },
+  p1: { color: 'd93f0b', description: 'High priority' },
+  p2: { color: 'fbca04', description: 'Normal priority' },
+  p3: { color: '0e8a16', description: 'Low priority' },
+  bug: { color: 'd73a4a', description: "Something isn't working" },
+  enhancement: { color: 'a2eeef', description: 'New feature or request' },
+  documentation: { color: '0075ca', description: 'Improvements or additions to documentation' },
+  question: { color: 'd876e3', description: 'Further information is requested' },
+  triaged: { color: 'bfdadc', description: 'Triage notes posted' },
+  reviewed: { color: 'bfdadc', description: 'Review notes posted' }
+};
+
+function labelStyle(name: string): { color: string; description: string } {
+  if (labelStyles[name]) return labelStyles[name];
+  if (name.startsWith('fixbot:')) return { color: 'ededed', description: `FixBot status: ${name.slice('fixbot:'.length)}` };
+  return { color: 'c5def5', description: `Area: ${name}` };
+}
+
 function parseLabels(labels: { name?: string; color?: string; description?: string }[] | undefined): IssueLabel[] {
   return (labels ?? []).flatMap((label) => label.name ? [{ name: label.name, ...(label.color ? { color: label.color } : {}), ...(label.description ? { description: label.description } : {}) }] : []);
 }
@@ -237,14 +258,23 @@ export class GhCliClient implements GitHubClient {
     if (!repoParts || labels.length === 0) return;
     const args = ['api', '--method', 'POST', `repos/${repoParts.owner}/${repoParts.name}/issues/${number}/labels`, ...labels.flatMap((label) => ['-f', `labels[]=${label}`])];
     const result = await execFile('gh', args, { cwd: this.cwd });
-    if (result.exitCode !== 0) throw new Error(result.stderr || 'gh issue labels add failed');
+    if (result.exitCode === 0) return;
+    // ponytail: GitHub 422s on unknown labels; create them (idempotent) and retry once — but only for that error
+    if (!/422|does not exist/i.test(result.stderr)) throw new Error(result.stderr || 'gh issue labels add failed');
+    for (const label of labels) {
+      const style = labelStyle(label);
+      await execFile('gh', ['api', '--method', 'POST', `repos/${repoParts.owner}/${repoParts.name}/labels`, '-f', `name=${label}`, '-f', `color=${style.color}`, '-f', `description=${style.description}`], { cwd: this.cwd });
+    }
+    const retry = await execFile('gh', args, { cwd: this.cwd });
+    if (retry.exitCode !== 0) throw new Error(retry.stderr || result.stderr || 'gh issue labels add failed');
   }
 
   async removeLabel(repo: string, number: number, label: string): Promise<void> {
     const repoParts = splitRepo(repo);
     if (!repoParts) return;
     const result = await execFile('gh', ['api', '--method', 'DELETE', `repos/${repoParts.owner}/${repoParts.name}/issues/${number}/labels/${encodeURIComponent(label)}`], { cwd: this.cwd });
-    if (result.exitCode !== 0 && !result.stderr.includes('Not Found')) throw new Error(result.stderr || 'gh issue label remove failed');
+    // ponytail: removing an absent label is a no-op; gh reports it as HTTP 404 ("Not Found" or "Label does not exist")
+    if (result.exitCode !== 0 && !result.stderr.includes('HTTP 404')) throw new Error(result.stderr || 'gh issue label remove failed');
   }
 
   async resolveReviewThread(repo: string, threadId: string): Promise<void> {
