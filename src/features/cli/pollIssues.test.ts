@@ -139,6 +139,125 @@ function at(list: readonly string[], index: number): string {
   return value;
 }
 
+// Live-dispatch harness for the pending queue: a permissive fake `gh` serves the
+// issue page, issue views, and swallows comments/labels, while `gh repo clone`
+// creates a real local git repo (origin = itself) so the triage workspace prep
+// and the cheap `true` agent run end to end without touching GitHub.
+async function makeQueueHarness(): Promise<Harness> {
+  const root = await mkdtemp(join(tmpdir(), 'fixbot-poll-queue-'));
+  const bin = join(root, 'bin');
+  const cwd = join(root, 'work');
+  await mkdir(bin, { recursive: true });
+  await mkdir(cwd, { recursive: true });
+  await writeFile(join(cwd, '.fixbot.json'), JSON.stringify({
+    autoLabel: fixbotConfig.autoLabel,
+    autoDispatch: { enabled: true, mode: 'triage', maxPerPoll: 1, skipWhenLabels: ['triaged'], requireLabels: ['crash-report'] },
+    agent: { command: 'true', args: [], timeoutSeconds: 60 }
+  }));
+  const issuesFile = join(root, 'issues.json');
+  const callsFile = join(root, 'gh-calls.log');
+  // #12 and #50 match the crash rule (eligible via planned crash-report); #30 does not and must never be queued.
+  await writeFile(issuesFile, JSON.stringify([
+    { number: 12, title: 'Editor crash on save', body: 'crash on save', url: 'u', labels: [], created_at: '2026-07-01T10:00:00Z', updated_at: NEWEST },
+    { number: 50, title: 'Crash two', body: 'another crash on load', url: 'u', labels: [], created_at: '2026-07-01T11:00:00Z', updated_at: '2026-07-01T11:00:00Z' },
+    { number: 30, title: 'Palette feels slow', body: 'sluggish drag', url: 'u', labels: [], created_at: '2026-07-01T12:00:00Z', updated_at: '2026-07-01T12:00:00Z' }
+  ]));
+  await writeFile(callsFile, '');
+  const script = `#!/bin/sh
+all="$*"
+printf '%s\\n' "$all" >> "${callsFile}"
+case "$1" in
+  repo)
+    [ "$2" = "clone" ] || exit 64
+    dir="$4"
+    git init -q -b main "$dir" 2>/dev/null || true
+    git -C "$dir" -c user.name=t -c user.email=t@t.invalid commit -q --allow-empty -m init 2>/dev/null || true
+    git -C "$dir" remote add origin "$dir" 2>/dev/null || true
+    ;;
+  issue)
+    if [ "$2" = "view" ]; then
+      case "$3" in
+        12) printf '{"title":"Editor crash on save","body":"crash on save","url":"u","comments":[],"labels":[{"name":"crash-report"}]}' ;;
+        50) printf '{"title":"Crash two","body":"another crash on load","url":"u","comments":[],"labels":[]}' ;;
+        33) printf '{"title":"Old crash","body":"crash","url":"u","comments":[],"labels":[{"name":"triaged"}]}' ;;
+        *) printf '{"title":"Issue","body":"","url":"u","comments":[],"labels":[]}' ;;
+      esac
+    fi
+    ;;
+  pr) echo "[]" ;;
+  label) ;;
+  api)
+    case "$all" in
+      *"--method GET"*"repos/acme/widgets/issues -f"*)
+        case "$all" in
+          *"since="*) echo "[]" ;;
+          *) cat "${issuesFile}" ;;
+        esac ;;
+      *"--method GET"*) echo "[]" ;;
+      *) echo "{}" ;;
+    esac ;;
+  *) echo "{}" ;;
+esac
+`;
+  await writeFile(join(bin, 'gh'), script);
+  await chmod(join(bin, 'gh'), 0o755);
+  return { root, cwd, callsFile };
+}
+
+test('poll-issues queue and process-queue drain', async (t) => {
+  const h = await makeQueueHarness();
+  const savedPath = process.env.PATH;
+  process.env.PATH = `${join(h.root, 'bin')}${savedPath ? `:${savedPath}` : ''}`;
+  const stateFile = join(h.cwd, '.fixbot', 'issue-state', 'acme-widgets.json');
+  const queueFile = join(h.cwd, '.fixbot', 'queue', 'acme-widgets.json');
+  const queueItems = async () =>
+    (JSON.parse(await readFile(queueFile, 'utf8')) as { items: { number: number; mode: string }[] }).items.map(({ number, mode }) => ({ number, mode }));
+  const drain = (flags: ParsedArgs['flags'] = {}) =>
+    runCommand({ command: 'process-queue', positional: [REPO], flags }, h.cwd);
+  try {
+    await t.test('poll queues only eligible issues', async () => {
+      const out = await runCommand(poll([REPO], {}), h.cwd);
+      assert.ok(out.includes('Queued triage for acme/widgets#12'), out);
+      assert.ok(out.includes('Queued triage for acme/widgets#50'), out);
+      // #30 misses requireLabels, so it is skipped outright, never queued.
+      assert.ok(!out.includes('#30'), out);
+      assert.deepStrictEqual(await queueItems(), [{ number: 12, mode: 'triage' }, { number: 50, mode: 'triage' }]);
+      assert.deepStrictEqual(JSON.parse(await readFile(stateFile, 'utf8')), { since: NEWEST });
+    });
+
+    await t.test('re-poll never duplicates queued jobs', async () => {
+      await rm(stateFile); // reset the cursor so the same page is served again
+      const out = await runCommand(poll([REPO], {}), h.cwd);
+      assert.ok(out.includes('Already queued triage for acme/widgets#12'), out);
+      assert.deepStrictEqual(await queueItems(), [{ number: 12, mode: 'triage' }, { number: 50, mode: 'triage' }]);
+    });
+
+    await t.test('drain runs maxPerPoll jobs and keeps the rest queued', async () => {
+      const out = await drain();
+      assert.ok(out.includes('Ran triage for acme/widgets#12'), out);
+      assert.ok(!out.includes('#50'), out);
+      assert.deepStrictEqual(await queueItems(), [{ number: 50, mode: 'triage' }]);
+    });
+
+    await t.test('next drain runs the remainder and empties the queue', async () => {
+      const out = await drain();
+      assert.ok(out.includes('Ran triage for acme/widgets#50'), out);
+      assert.deepStrictEqual(await queueItems(), []);
+    });
+
+    await t.test('queued job that gained a skip label is dropped, not run', async () => {
+      await writeFile(queueFile, JSON.stringify({ items: [{ number: 33, mode: 'triage', auto: true, queuedAt: NEWEST }] }));
+      const out = await drain();
+      assert.ok(out.includes('Queue drained nothing.'), out);
+      assert.deepStrictEqual(await queueItems(), []);
+    });
+  } finally {
+    if (savedPath === undefined) delete process.env.PATH;
+    else process.env.PATH = savedPath;
+    await rm(h.root, { recursive: true, force: true });
+  }
+});
+
 test('poll-issues auto-label orchestration', async (t) => {
   const h = await makeHarness();
   const savedPath = process.env.PATH;
@@ -202,8 +321,8 @@ test('poll-issues auto-label orchestration', async (t) => {
       const before = (await ghCalls(h.callsFile)).length;
       const out = await runCommand(poll([REPO], { 'dry-run': true }), h.cwd);
       assert.ok(out.includes('Would label acme/widgets#12: crash-report'), out);
-      assert.ok(out.includes('Would auto-dispatch triage for acme/widgets#12'), out);
-      assert.equal(out.split('Would auto-dispatch ').length - 1, 1, out);
+      assert.ok(out.includes('Would queue triage for acme/widgets#12'), out);
+      assert.equal(out.split('Would queue ').length - 1, 1, out);
       assert.ok(!out.includes('acme/widgets#30'), out);
       assert.ok(!out.includes('acme/widgets#33'), out);
       const passCalls = (await ghCalls(h.callsFile)).slice(before);

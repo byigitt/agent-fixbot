@@ -109,16 +109,16 @@ test('poll-comments single-pass orchestration', async (t) => {
   try {
     await t.test('dry-run pass routes mentions, skips the rest, and leaves no state behind', async () => {
       const out = await runCommand(poll([REPO], { 'dry-run': true }), h.cwd);
+      // Stop never waits behind the queue: it runs immediately, even in dry-run.
       assert.ok(out.includes('Dispatched stop for acme/widgets#9'), out);
-      assert.ok(out.includes('Dispatched fix for acme/widgets#12'), out);
-      // The plain comment (#12) and the @fixbotter lookalike (#7) must not dispatch.
-      assert.equal(out.split('Dispatched ').length - 1, 2, out);
-      // The routed stop went through the real stop path...
       assert.match(out, /No running job stopped for acme\/widgets#9/);
-      // ...and the routed fix inherited --dry-run: noop agent, not the live runner.
-      assert.ok(out.includes('Agent finished: noop-agent'), out);
-      // A preview must not mark comments processed.
+      // Work commands are queued, not dispatched inline.
+      assert.ok(out.includes('Would queue fix for acme/widgets#12'), out);
+      // The plain comment (#12) and the @fixbotter lookalike (#7) must not route.
+      assert.equal(out.split('Would queue ').length - 1, 1, out);
+      // A preview must not mark comments processed or enqueue jobs.
       assert.equal(await pathExists(defaultState), false, 'dry-run wrote poll state');
+      assert.equal(await pathExists(join(h.cwd, '.fixbot', 'queue')), false, 'dry-run wrote the job queue');
       // Exactly one API read and zero mutations: dry-run stayed off GitHub.
       const calls = await ghCalls(h.callsFile);
       assert.equal(calls.length, 1, calls.join('\n'));
