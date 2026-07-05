@@ -42,7 +42,8 @@ const autoDispatchConfig: AutoDispatchConfig = {
 
 const gitConfig = {
   authorName: 'fixbot',
-  authorEmail: 'fixbot@users.noreply.github.com'
+  authorEmail: 'fixbot@users.noreply.github.com',
+  coAuthors: []
 };
 
 function makeJob(policyConfig: PolicyConfig, mode: RepairJob['mode']): RepairJob {
@@ -233,6 +234,7 @@ test('publishRepair commits with the configured git author identity', async () =
     await writeFile(join(workspace, 'a.txt'), 'alpha\nBETA\n');
 
     const job = makeJob(policy({ allowPush: true }), 'fix');
+    job.config.git = { ...gitConfig, coAuthors: ['Test Human <human@example.invalid>'] };
     const github: GitHubClient = {
       ...rejectingGitHubClient(),
       createPullRequest: async () => ({ url: 'https://github.test/acme/widgets/pull/99', number: 99 })
@@ -250,6 +252,9 @@ test('publishRepair commits with the configured git author identity', async () =
       job.config.git.authorName,
       job.config.git.authorEmail
     ]);
+    // Configured co-authors must land as a trailer GitHub can attribute.
+    const body = await git(remote, ['log', '-1', '--format=%(trailers:key=Co-authored-by,valueonly)', job.branch]);
+    assert.strictEqual(body.stdout.trim(), 'Test Human <human@example.invalid>');
   } finally {
     for (const [key, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[key];
