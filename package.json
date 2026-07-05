@@ -8,9 +8,10 @@
     "agent-fixbot": "./dist/cli.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && cp -R src/features/prompts/templates dist/features/prompts/",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/cli.js daemon",
+    "watch:repo": "FIXBOT_DEBUG=${FIXBOT_DEBUG:-1} GH_CONFIG_DIR=/Users/baris/.config/gh-agent-fixbot node dist/cli.js daemon byigitt/agent-fixbot --bot flyleaffan9",
     "dev": "pnpm build && node dist/cli.js daemon",
     "test": "pnpm build && node --test \"dist/**/*.test.js\"",
     "doctor": "node dist/cli.js doctor",
