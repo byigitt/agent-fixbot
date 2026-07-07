@@ -24,7 +24,7 @@ import { pathExists, readJson, writeJson, writeText } from '../../shared/fs.js';
 import { execFile } from '../../shared/exec.js';
 import { debugLog } from '../../shared/debug.js';
 import { repoSlug } from '../../shared/paths.js';
-import { routeComment, type CommentEvent, type RoutedCommand } from '../controller/commentRouter.js';
+import { mentionsBot, routeComment, type CommentEvent, type RoutedCommand } from '../controller/commentRouter.js';
 import { runDoctor } from './doctor.js';
 import { flagBool, flagString, type ParsedArgs } from './args.js';
 import { helpText } from './help.js';
@@ -237,13 +237,15 @@ async function listOpenBotPrNumbers(repo: string, botName: string, cwd: string):
     .map((pr) => pr.number as number);
 }
 
-// Newest non-bot review activity (submitted reviews + inline comments) on a PR.
+// Newest non-bot feedback on a PR: submitted reviews, inline comments, and plain
+// conversation comments — so a reporter commenting on the bot's PR continues the loop.
 async function latestReviewActivity(repo: string, number: number, botName: string, cwd: string): Promise<string | undefined> {
   const repoParts = repo.split('/');
-  const base = `repos/${repoParts[0]}/${repoParts[1]}/pulls/${number}`;
-  const [reviews, comments] = await Promise.all([
-    execFile('gh', ['api', '--method', 'GET', `${base}/reviews`, '-f', 'per_page=100'], { cwd, timeoutSeconds: 120 }),
-    execFile('gh', ['api', '--method', 'GET', `${base}/comments`, '-f', 'per_page=100'], { cwd, timeoutSeconds: 120 })
+  const base = `repos/${repoParts[0]}/${repoParts[1]}`;
+  const [reviews, comments, conversation] = await Promise.all([
+    execFile('gh', ['api', '--method', 'GET', `${base}/pulls/${number}/reviews`, '-f', 'per_page=100'], { cwd, timeoutSeconds: 120 }),
+    execFile('gh', ['api', '--method', 'GET', `${base}/pulls/${number}/comments`, '-f', 'per_page=100'], { cwd, timeoutSeconds: 120 }),
+    execFile('gh', ['api', '--method', 'GET', `${base}/issues/${number}/comments`, '-f', 'per_page=100'], { cwd, timeoutSeconds: 120 })
   ]);
   const timestamps: number[] = [];
   if (reviews.exitCode === 0) {
@@ -257,6 +259,15 @@ async function latestReviewActivity(repo: string, number: number, botName: strin
   if (comments.exitCode === 0) {
     for (const comment of JSON.parse(comments.stdout) as { user?: { login?: string }; body?: string; updated_at?: string }[]) {
       if (comment.user?.login !== botName && (comment.body ?? '').trim().length > 0 && comment.updated_at) timestamps.push(Date.parse(comment.updated_at));
+    }
+  }
+  if (conversation.exitCode === 0) {
+    for (const comment of JSON.parse(conversation.stdout) as { user?: { login?: string }; body?: string; updated_at?: string }[]) {
+      if (comment.user?.login === botName || (comment.body ?? '').trim().length === 0 || !comment.updated_at) continue;
+      // Bot mentions belong to the comment router (poll-comments); counting them here
+      // would double-dispatch — e.g. "@bot stop" must never queue address-review.
+      if (mentionsBot(comment.body ?? '', botName)) continue;
+      timestamps.push(Date.parse(comment.updated_at));
     }
   }
   const latest = timestamps.filter(Number.isFinite).sort((a, b) => b - a)[0];
