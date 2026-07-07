@@ -1,6 +1,22 @@
+<div align="center">
+
+<img src="docs/assets/banner.png" alt="agent-fixbot — issues in, pull requests out" width="100%" />
+
 # agent-fixbot
 
-A local CLI runner that operates a **normal GitHub bot account** (no GitHub App) to triage, reproduce, and fix issues, and to review or repair pull requests. It polls a repository with the `gh` CLI, routes `@bot` mentions to commands, prepares an isolated workspace, runs a configured coding agent (`omp` by default) against a rendered prompt, and — only when every safety guard passes — publishes the result as a PR, comment, or label update.
+**Issues in, pull requests out.**
+
+A local CLI runner that operates a normal GitHub **bot account** (no GitHub App) to triage, reproduce, and fix issues, and to review or repair pull requests.
+
+![Node >= 22](https://img.shields.io/badge/node-%E2%89%A522-339933?logo=node.js&logoColor=white)
+![pnpm](https://img.shields.io/badge/pnpm-workspace-F69220?logo=pnpm&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
+
+[How it works](#how-it-works) · [Setup](#setup) · [Commands](#commands) · [Bot mentions](#bot-mentions) · [Configuration](#configuration) · [Safety model](#safety-model)
+
+</div>
+
+It polls a repository with the `gh` CLI, routes `@bot` mentions to commands, prepares an isolated workspace, runs a configured coding agent (`omp` by default) against a rendered prompt, and — only when every safety guard passes — publishes the result as a PR, comment, or label update.
 
 The agent process never sees a GitHub token: all GitHub mutations go through the wrapper via the `gh` CLI.
 
@@ -92,22 +108,22 @@ It polls comments every 60s and issues every 180s until Ctrl+C (tune with `--com
 
 ## Commands
 
-| Command | Purpose |
-| --- | --- |
-| `doctor` | Check local tool availability (`node`, `pnpm`, `git`, `gh`). |
-| `daemon <owner/repo>` | Poll comments and issues on an interval until Ctrl+C. Alias: `watch`. |
-| `prepare <owner/repo#issue>` | Create job and prompt files without running an agent. |
-| `triage <owner/repo#issue>` | Run a no-edit triage phase and optionally publish a status comment. |
-| `reproduce <owner/repo#issue>` | Run a reproduction-only agent phase and verify its failing test plan. |
-| `fix <owner/repo#issue>` | Prepare workspace, run the agent, and publish the PR result. |
-| `fix-ci <owner/repo#issue-or-pr>` | Fix failing CI/checks with PR check context when available. |
-| `review <owner/repo#pull>` | Review a pull request without editing source code. |
-| `address-review <owner/repo#pull>` | Check out an existing PR branch, address review feedback, and push back. |
-| `poll-issues <owner/repo>` | Read recently opened/updated issues and apply configured auto labels. |
-| `poll-comments <owner/repo>` | Poll recent issue comments and dispatch bot mentions once. |
-| `route-comment <event.json>` | Parse a GitHub `issue_comment` payload into a safe bot command. |
-| `dispatch-comment <event.json>` | Route and execute a single `issue_comment` payload. |
-| `stop <owner/repo#issue-or-pr>` | Stop a running local job for the ref if this host started it. |
+| Command                             | Purpose                                                                  |
+| :---------------------------------- | :----------------------------------------------------------------------- |
+| `doctor`                            | Check local tool availability (`node`, `pnpm`, `git`, `gh`).             |
+| `daemon <owner/repo>`               | Poll comments and issues on an interval until Ctrl+C. Alias: `watch`.    |
+| `prepare <owner/repo#issue>`        | Create job and prompt files without running an agent.                    |
+| `triage <owner/repo#issue>`         | Run a no-edit triage phase and optionally publish a status comment.      |
+| `reproduce <owner/repo#issue>`      | Run a reproduction-only agent phase and verify its failing test plan.    |
+| `fix <owner/repo#issue>`            | Prepare workspace, run the agent, and publish the PR result.             |
+| `fix-ci <owner/repo#issue-or-pr>`   | Fix failing CI/checks with PR check context when available.              |
+| `review <owner/repo#pull>`          | Review a pull request without editing source code.                       |
+| `address-review <owner/repo#pull>`  | Check out an existing PR branch, address review feedback, and push back. |
+| `poll-issues <owner/repo>`          | Read recently opened/updated issues and apply configured auto labels.    |
+| `poll-comments <owner/repo>`        | Poll recent issue comments and dispatch bot mentions once.               |
+| `route-comment <event.json>`        | Parse a GitHub `issue_comment` payload into a safe bot command.          |
+| `dispatch-comment <event.json>`     | Route and execute a single `issue_comment` payload.                      |
+| `stop <owner/repo#issue-or-pr>`     | Stop a running local job for the ref if this host started it.            |
 
 Run `node dist/cli.js --help` for flags.
 
