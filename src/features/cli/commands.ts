@@ -166,8 +166,15 @@ function labelsForIssue(issue: RecentIssue, config: AutoLabelConfig): string[] {
 }
 
 // Returns a skip reason, or undefined when the issue should be auto-dispatched.
-function autoDispatchSkipReason(issue: Pick<IssueContext, 'labels'>, plannedLabels: string[], config: AutoDispatchConfig): string | undefined {
+function autoDispatchSkipReason(issue: Pick<IssueContext, 'labels' | 'author'>, plannedLabels: string[], config: AutoDispatchConfig): string | undefined {
   if (!config.enabled) return 'autoDispatch.enabled is false in .fixbot.json';
+  // Fail closed: with an allowlist configured, an issue with no readable author never dispatches.
+  if (config.allowedAuthors.length > 0) {
+    const author = issue.author?.toLowerCase();
+    if (!author) return 'author unknown but autoDispatch.allowedAuthors is set';
+    if (!config.allowedAuthors.some((login) => login.toLowerCase() === author))
+      return `author "${issue.author}" not in autoDispatch.allowedAuthors`;
+  }
   const labels = new Set([...issue.labels.map((label) => label.name), ...plannedLabels]);
   const skipLabel = config.skipWhenLabels.find((label) => labels.has(label));
   if (skipLabel) return `has skip label "${skipLabel}"`;

@@ -12,6 +12,7 @@ export type IssueContext = {
   comments: string[];
   labels: IssueLabel[];
   url: string;
+  author?: string;
 };
 
 export type PullRequestCheck = {
@@ -31,7 +32,6 @@ export type PullRequestReviewThread = {
 };
 
 export type PullRequestContext = IssueContext & {
-  author?: string;
   baseRefName?: string;
   headRefName?: string;
   headRepository?: string;

@@ -193,7 +193,7 @@ Existing bot PR bulunursa `gh pr checkout` ile aynı branch'e devam edilir ve pu
 - `--dry-run` issue'ları okur ve ne yapacağını yazar; label mutasyonu, agent dispatch ve state write yapmaz.
 - Non-dry modda yalnız eksik label'lar eklenir; mevcut label tekrar eklenmez.
 - `autoDispatch.enabled:false` varsayılandır; agent maliyeti/yan etkisi açık opt-in ister.
-- `autoDispatch.maxPerPoll`, `skipWhenLabels` ve `requireLabels` gürültülü issue update'lerinin paralel/pahalı job doğurmasını sınırlar.
+- `autoDispatch.maxPerPoll`, `skipWhenLabels`, `requireLabels` ve `allowedAuthors` (boş = herkes; login eşleşmesi case-insensitive) gürültülü issue update'lerinin paralel/pahalı job doğurmasını sınırlar.
 - Otomatik başlatılan job mevcut per-issue lock'u kullanır; aynı issue için paralel agent çalışmaz.
 - Wrapper started status'ı idempotent marker/upsert ile yazar; human opening/progress tonunu agent prompt'u kendi artifact/comment içeriğinde üretir.
 - Varsayılan `defaultLabels: []`; label bulunmayan issue'ya repo'da var olmayan `needs-triage` gibi label basıp job'ı bozmaz. Default label isteniyorsa repo label'ı önceden oluşturulup config'e eklenmeli.
@@ -296,7 +296,8 @@ Kurallar:
     "mode": "triage",
     "maxPerPoll": 1,
     "skipWhenLabels": ["triaged"],
-    "requireLabels": []
+    "requireLabels": [],
+    "allowedAuthors": []
   },
   "policy": {
     "requireHumanReview": true,

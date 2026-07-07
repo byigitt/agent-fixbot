@@ -144,7 +144,7 @@ Optional `.fixbot.json` in the working directory; every field has a default. See
 
 - `agent` — the coding agent command; default `omp -p @{prompt}`. Point `command`/`args` at `pi` or any CLI agent. Optional `model` selects the model; `modelArgs` (default `["--model", "{model}"]`) controls how the chosen agent receives it, so keep it in sync with that agent's CLI.
 - `autoLabel` — keyword rules applied to newly polled issues.
-- `autoDispatch` — automatically start `triage`/`reproduce`/`fix` on new issues (off by default, rate-limited by `maxPerPoll`, gated by `requireLabels`/`skipWhenLabels`). Also enables the review loop: new human feedback on an open bot PR — a submitted review, an inline comment, or a plain PR comment — auto-dispatches `address-review`, which commits follow-ups onto the same PR branch. Comments mentioning the bot are handled by the mention router instead.
+- `autoDispatch` — automatically start `triage`/`reproduce`/`fix` on new issues (off by default, rate-limited by `maxPerPoll`, gated by `requireLabels`/`skipWhenLabels`, and optionally restricted to issues opened by `allowedAuthors` — a case-insensitive GitHub login allowlist, empty = everyone). Also enables the review loop: new human feedback on an open bot PR — a submitted review, an inline comment, or a plain PR comment — auto-dispatches `address-review`, which commits follow-ups onto the same PR branch. Comments mentioning the bot are handled by the mention router instead.
 - `policy` — the safety profile: `allowPush` (default `false`), `maxChangedFiles`, `maxDiffLines`, `blockedPaths`, `allowedCommands`, evidence requirements, and per-outcome status labels.
 
 ## Safety model

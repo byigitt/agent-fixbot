@@ -223,6 +223,7 @@ const lifecycleIssue = {
   title: 'Save crashes on empty name',
   body: 'Saving a widget with an empty name crashes the editor.',
   url: `https://github.com/${REPO}/issues/${LIFECYCLE_ISSUE}`,
+  author: { login: 'dana-reporter' },
   comments: [{ body: 'same here on 2.3.1' }],
   labels: [
     { name: 'bug', color: 'd73a4a', description: 'Something is broken' },
@@ -459,8 +460,9 @@ test('GhCliClient normal-user lifecycle APIs', async (t) => {
   const startedMarker = '<!-- agent-fixbot:status:started -->';
   let startedCommentId: number | undefined;
   try {
-    await t.test('getIssueContext reads labels through gh issue view', async () => {
+    await t.test('getIssueContext reads author and labels through gh issue view', async () => {
       const context = await client.getIssueContext(REPO, LIFECYCLE_ISSUE);
+      assert.equal(context.author, 'dana-reporter');
       assert.deepStrictEqual(context.labels, [
         { name: 'bug', color: 'd73a4a', description: 'Something is broken' },
         { name: 'help wanted' }
@@ -609,6 +611,7 @@ const repoIssues = [
     title: 'Crash when saving with empty name',
     body: 'Steps: save a widget without a name -> crash.',
     url: 'https://github.com/acme/widgets/issues/12',
+    user: { login: 'erin-reporter' },
     labels: [{ name: 'bug', color: 'd73a4a', description: 'Something broken' }],
     created_at: '2026-06-30T10:00:00Z',
     updated_at: '2026-07-01T08:15:00Z'
@@ -667,6 +670,7 @@ test('GhCliClient recent-issues read model', async (t) => {
         comments: [],
         labels: [{ name: 'bug', color: 'd73a4a', description: 'Something broken' }],
         url: 'https://github.com/acme/widgets/issues/12',
+        author: 'erin-reporter',
         createdAt: '2026-06-30T10:00:00Z',
         updatedAt: '2026-07-01T08:15:00Z'
       });

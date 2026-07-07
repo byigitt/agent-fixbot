@@ -70,7 +70,8 @@
     "skipWhenLabels": [
       "triaged"
     ],
-    "requireLabels": []
+    "requireLabels": [],
+    "allowedAuthors": []
   },
   "policy": {
     "requireHumanReview": true,
