@@ -38,3 +38,21 @@ test('loadConfig keeps default agent.modelArgs when only agent.model is overridd
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+// A repo turning on autoDispatch with just an author allowlist must keep the
+// default skip/require label guards. A shallow merge (`override.autoDispatch
+// ?? base.autoDispatch`) would drop them, and old configs without the key
+// must keep dispatching for every author (allowedAuthors defaults to []).
+test('loadConfig merges autoDispatch.allowedAuthors and keeps default label guards', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'fixbot-config-'));
+  try {
+    await writeFile(join(cwd, '.fixbot.json'), JSON.stringify({ autoDispatch: { enabled: true, allowedAuthors: ['alice'] } }));
+    const config = await loadConfig(cwd);
+    assert.strictEqual(config.autoDispatch.enabled, true);
+    assert.deepStrictEqual(config.autoDispatch.allowedAuthors, ['alice']);
+    assert.deepStrictEqual(config.autoDispatch.skipWhenLabels, defaultConfig.autoDispatch.skipWhenLabels, 'label guards absent from the override must survive the merge');
+    assert.deepStrictEqual(defaultConfig.autoDispatch.allowedAuthors, [], 'default allowlist must stay open');
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});

@@ -37,7 +37,8 @@ const autoDispatchConfig: AutoDispatchConfig = {
   mode: 'triage',
   maxPerPoll: 1,
   skipWhenLabels: ['triaged'],
-  requireLabels: []
+  requireLabels: [],
+  allowedAuthors: []
 };
 
 const gitConfig = {

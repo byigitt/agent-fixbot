@@ -13,7 +13,7 @@ import type {
   RecentIssueComment
 } from './githubClient.js';
 
-type GhIssue = { title?: string; body?: string; url?: string; comments?: { body?: string }[]; labels?: { name?: string; color?: string; description?: string }[] };
+type GhIssue = { title?: string; body?: string; url?: string; author?: { login?: string }; comments?: { body?: string }[]; labels?: { name?: string; color?: string; description?: string }[] };
 type GhPrList = { url?: string; number?: number; body?: string; author?: { login?: string }; headRefName?: string; headRepository?: { nameWithOwner?: string } };
 type GhPrView = {
   title?: string;
@@ -32,7 +32,7 @@ type GhPrView = {
 };
 type GhInlineComment = { body?: string; path?: string; line?: number; user?: { login?: string } };
 type GhIssueComment = { id?: number; body?: string; user?: { login?: string }; issue_url?: string; html_url?: string; created_at?: string; updated_at?: string };
-type GhRepoIssue = { number?: number; title?: string; body?: string; url?: string; labels?: { name?: string; color?: string; description?: string }[]; created_at?: string; updated_at?: string; pull_request?: unknown };
+type GhRepoIssue = { number?: number; title?: string; body?: string; url?: string; user?: { login?: string }; labels?: { name?: string; color?: string; description?: string }[]; created_at?: string; updated_at?: string; pull_request?: unknown };
 type GhCheckRuns = { check_runs?: { name?: string; status?: string; conclusion?: string; details_url?: string; html_url?: string; output?: { title?: string; summary?: string; text?: string } }[] };
 type GhReviewThreadResponse = { data?: { repository?: { pullRequest?: { reviewThreads?: { nodes?: GhReviewThread[] } } } } };
 type GhReviewThread = { id?: string; isResolved?: boolean; path?: string; line?: number; comments?: { nodes?: { body?: string; author?: { login?: string } }[] } };
@@ -112,7 +112,7 @@ export class GhCliClient implements GitHubClient {
   constructor(private readonly cwd: string) {}
 
   async getIssueContext(repo: string, number: number): Promise<IssueContext> {
-    const result = await execFile('gh', ['issue', 'view', String(number), '--repo', repo, '--json', 'title,body,url,comments,labels'], { cwd: this.cwd });
+    const result = await execFile('gh', ['issue', 'view', String(number), '--repo', repo, '--json', 'title,body,url,author,comments,labels'], { cwd: this.cwd });
     if (result.exitCode !== 0) throw new Error(result.stderr || 'gh issue view failed');
     const issue = JSON.parse(result.stdout) as GhIssue;
     return {
@@ -122,7 +122,8 @@ export class GhCliClient implements GitHubClient {
       body: issue.body ?? '',
       comments: (issue.comments ?? []).map((comment) => comment.body ?? ''),
       labels: parseLabels(issue.labels),
-      url: issue.url ?? `https://github.com/${repo}/issues/${number}`
+      url: issue.url ?? `https://github.com/${repo}/issues/${number}`,
+      ...(issue.author?.login ? { author: issue.author.login } : {})
     };
   }
 
@@ -224,6 +225,7 @@ export class GhCliClient implements GitHubClient {
         comments: [],
         labels: parseLabels(issue.labels),
         url: issue.url ?? `https://github.com/${repo}/issues/${issue.number}`,
+        ...(issue.user?.login ? { author: issue.user.login } : {}),
         ...(issue.created_at ? { createdAt: issue.created_at } : {}),
         ...(issue.updated_at ? { updatedAt: issue.updated_at } : {})
       }];

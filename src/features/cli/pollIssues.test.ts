@@ -37,14 +37,16 @@ const autoDispatchConfig = {
 // One page of `gh api repos/acme/widgets/issues`:
 // #12 matches both rules but already carries `docs`, so only `crash-report`
 // may be added; #30 matches nothing and defaultLabels is empty; #33 already
-// carries every label its rule would add; #41 is a PR row that the client
-// must drop even though its title matches the crash rule.
+// carries every label its rule would add (and has no `user`, exercising the
+// allowlist fail-closed path); #41 is a PR row that the client must drop even
+// though its title matches the crash rule.
 const recentIssues = [
   {
     number: 12,
     title: 'Editor crash on save',
     body: 'Also the README has a typo in the save section.',
     url: 'https://github.com/acme/widgets/issues/12',
+    user: { login: 'Trusted-Reporter' },
     labels: [{ name: 'docs' }],
     created_at: '2026-07-01T10:00:00Z',
     updated_at: NEWEST
@@ -54,6 +56,7 @@ const recentIssues = [
     title: 'Widget palette feels slow',
     body: 'Dragging feels sluggish on large boards.',
     url: 'https://github.com/acme/widgets/issues/30',
+    user: { login: 'drive-by' },
     labels: [],
     created_at: '2026-07-01T11:00:00Z',
     updated_at: '2026-07-01T11:00:00Z'
@@ -177,8 +180,8 @@ case "$1" in
   issue)
     if [ "$2" = "view" ]; then
       case "$3" in
-        12) printf '{"title":"Editor crash on save","body":"crash on save","url":"u","comments":[],"labels":[{"name":"crash-report"}]}' ;;
-        50) printf '{"title":"Crash two","body":"another crash on load","url":"u","comments":[],"labels":[]}' ;;
+        12) printf '{"title":"Editor crash on save","body":"crash on save","url":"u","author":{"login":"trusted-reporter"},"comments":[],"labels":[{"name":"crash-report"}]}' ;;
+        50) printf '{"title":"Crash two","body":"another crash on load","url":"u","author":{"login":"drive-by"},"comments":[],"labels":[]}' ;;
         33) printf '{"title":"Old crash","body":"crash","url":"u","comments":[],"labels":[{"name":"triaged"}]}' ;;
         *) printf '{"title":"Issue","body":"","url":"u","comments":[],"labels":[]}' ;;
       esac
@@ -247,6 +250,23 @@ test('poll-issues queue and process-queue drain', async (t) => {
 
     await t.test('queued job that gained a skip label is dropped, not run', async () => {
       await writeFile(queueFile, JSON.stringify({ items: [{ number: 33, mode: 'triage', auto: true, queuedAt: NEWEST }] }));
+      const out = await drain();
+      assert.ok(out.includes('Queue drained nothing.'), out);
+      assert.deepStrictEqual(await queueItems(), []);
+    });
+
+    await t.test('queued jobs from non-allowlisted or unknown authors are dropped, not run', async () => {
+      await writeFile(join(h.cwd, '.fixbot.json'), JSON.stringify({
+        autoLabel: fixbotConfig.autoLabel,
+        autoDispatch: { enabled: true, mode: 'triage', maxPerPoll: 2, skipWhenLabels: [], requireLabels: [], allowedAuthors: ['trusted-reporter'] },
+        agent: { command: 'true', args: [], timeoutSeconds: 60 }
+      }));
+      // #50's view carries author drive-by (not allowlisted); #33's view has no
+      // author at all — with an allowlist set, both must drop at drain time.
+      await writeFile(queueFile, JSON.stringify({ items: [
+        { number: 50, mode: 'triage', auto: true, queuedAt: NEWEST },
+        { number: 33, mode: 'triage', auto: true, queuedAt: NEWEST }
+      ] }));
       const out = await drain();
       assert.ok(out.includes('Queue drained nothing.'), out);
       assert.deepStrictEqual(await queueItems(), []);
@@ -329,6 +349,21 @@ test('poll-issues auto-label orchestration', async (t) => {
       assert.equal(passCalls.length, 1, passCalls.join('\n'));
       assert.ok(!at(passCalls, 0).includes('--method POST'), at(passCalls, 0));
       assert.equal(await pathExists(defaultState), false, 'dry-run wrote issue poll state');
+    });
+
+    await t.test('allowedAuthors restricts dispatch to whitelisted logins, case-insensitively', async () => {
+      // No label gate: with allowedAuthors alone, #12 (user Trusted-Reporter)
+      // must match the lowercase allowlist entry, #30 (drive-by) must be
+      // skipped, and #33 (no user field) must fail closed — never queued.
+      await writeFile(join(h.cwd, '.fixbot.json'), JSON.stringify({
+        autoLabel: fixbotConfig.autoLabel,
+        autoDispatch: { enabled: true, mode: 'triage', maxPerPoll: 1, skipWhenLabels: [], requireLabels: [], allowedAuthors: ['trusted-reporter'] }
+      }));
+      const out = await runCommand(poll([REPO], { 'dry-run': true }), h.cwd);
+      assert.ok(out.includes('Would queue triage for acme/widgets#12'), out);
+      assert.equal(out.split('Would queue ').length - 1, 1, out);
+      assert.ok(!out.includes('Would queue triage for acme/widgets#30'), out);
+      assert.ok(!out.includes('Would queue triage for acme/widgets#33'), out);
     });
 
     await t.test('autoLabel.enabled=false disables labeling entirely', async () => {

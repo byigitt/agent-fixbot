@@ -30,6 +30,9 @@ export type AutoDispatchConfig = {
   maxPerPoll: number;
   skipWhenLabels: string[];
   requireLabels: string[];
+  // GitHub logins whose issues may be auto-dispatched. Empty = every author.
+  // Matching is case-insensitive, like GitHub logins themselves.
+  allowedAuthors: string[];
 };
 
 export type GitConfig = {
@@ -89,7 +92,8 @@ export const defaultConfig: FixbotConfig = {
     mode: 'triage',
     maxPerPoll: 1,
     skipWhenLabels: ['triaged'],
-    requireLabels: []
+    requireLabels: [],
+    allowedAuthors: []
   },
   git: {
     authorName: 'fixbot',
