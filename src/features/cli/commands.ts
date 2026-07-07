@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { loadConfig } from '../config/loadConfig.js';
-import type { AutoDispatchConfig, AutoLabelConfig } from '../config/config.js';
+import type { AgentConfig, AutoDispatchConfig, AutoLabelConfig } from '../config/config.js';
 import { parseIssueRef, type IssueRef } from '../github/ref.js';
 import { GhCliClient } from '../github/ghClient.js';
 import { FixtureGitHubClient } from '../github/fixtureClient.js';
@@ -565,7 +565,7 @@ async function listRepoLabels(repo: string, cwd: string): Promise<string[]> {
   return result.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
 }
 
-async function quickLabelIssue(github: GitHubClient, agent: { command: string; args: string[]; timeoutSeconds: number }, workspace: string, repo: string, number: number, issue: IssueContext, onSpawn: (pid: number) => Promise<void>): Promise<{ note: string; opener?: string }> {
+async function quickLabelIssue(github: GitHubClient, agent: AgentConfig, workspace: string, repo: string, number: number, issue: IssueContext, onSpawn: (pid: number) => Promise<void>): Promise<{ note: string; opener?: string }> {
   const promptFile = path.join(workspace, '.fixbot', 'label-prompt.md');
   const existing = await listRepoLabels(repo, workspace);
   const prompt = [

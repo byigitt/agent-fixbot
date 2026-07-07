@@ -2,8 +2,28 @@ import path from 'node:path';
 import { createWriteStream, mkdirSync, type WriteStream } from 'node:fs';
 import { execFile, stripMutationSecrets } from '../../shared/exec.js';
 import { debugLog } from '../../shared/debug.js';
+import { FixbotError } from '../../shared/errors.js';
 import type { AgentConfig } from '../config/config.js';
 import type { AgentRunner, AgentRunInput, AgentRunResult } from './agentRunner.js';
+
+// Resolves the final agent argv. The model, when configured, is delivered in
+// the syntax the chosen agent understands: through a `{model}` placeholder in
+// `args`, or by appending `modelArgs` (default `--model {model}`, matching
+// `omp`/`pi`). Miswired configs fail here instead of leaking `{model}`
+// literals into — or silently dropping the model from — the agent command.
+export function buildAgentArgs(config: AgentConfig, promptFile: string): string[] {
+  const { model } = config;
+  const inlineModel = config.args.some((arg) => arg.includes('{model}'));
+  if (model === undefined) {
+    if (inlineModel) throw new FixbotError('agent.args references {model} but agent.model is not set', 'AGENT_MODEL_CONFIG');
+    return config.args.map((arg) => arg.replaceAll('{prompt}', promptFile));
+  }
+  const args = inlineModel ? config.args : [...config.args, ...config.modelArgs];
+  if (!inlineModel && !config.modelArgs.some((arg) => arg.includes('{model}'))) {
+    throw new FixbotError('agent.model is set but neither agent.args nor agent.modelArgs references {model}', 'AGENT_MODEL_CONFIG');
+  }
+  return args.map((arg) => arg.replaceAll('{prompt}', promptFile).replaceAll('{model}', model));
+}
 
 type RunLog = { write: (text: string) => void; end: (text: string) => void };
 
@@ -36,7 +56,7 @@ export class CommandAgentRunner implements AgentRunner {
   constructor(private readonly config: AgentConfig) {}
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
-    const args = this.config.args.map((arg) => arg.replaceAll('{prompt}', input.promptFile));
+    const args = buildAgentArgs(this.config, input.promptFile);
     const log = openRunLog(input.cwd);
     log?.write(`# ${[this.config.command, ...args].join(' ')}\n# started ${new Date().toISOString()}\n\n`);
     const result = await execFile(this.config.command, args, {

@@ -1,6 +1,13 @@
 export type AgentConfig = {
   command: string;
   args: string[];
+  // Optional model handed to the agent CLI. Delivered either through a
+  // `{model}` placeholder in `args`, or by appending `modelArgs` when no
+  // placeholder is present.
+  model?: string;
+  // How the chosen agent receives the model — must match that CLI's flag
+  // syntax. `{model}` is replaced with `model`. Default matches `omp`/`pi`.
+  modelArgs: string[];
   timeoutSeconds: number;
 };
 
@@ -64,6 +71,7 @@ export const defaultConfig: FixbotConfig = {
   agent: {
     command: 'omp',
     args: ['-p', '@{prompt}'],
+    modelArgs: ['--model', '{model}'],
     timeoutSeconds: 2700
   },
   autoLabel: {
