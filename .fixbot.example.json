@@ -8,6 +8,10 @@
       "-p",
       "@{prompt}"
     ],
+    "modelArgs": [
+      "--model",
+      "{model}"
+    ],
     "timeoutSeconds": 2700
   },
   "git": {

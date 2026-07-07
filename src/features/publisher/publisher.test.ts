@@ -67,7 +67,7 @@ function makeJob(policyConfig: PolicyConfig, mode: RepairJob['mode']): RepairJob
       defaultBase: 'main',
       botName: 'fixbot',
       workspaceRoot: '.workspaces',
-      agent: { command: 'true', args: [], timeoutSeconds: 60 },
+      agent: { command: 'true', args: [], modelArgs: [], timeoutSeconds: 60 },
       autoLabel: autoLabelConfig,
       autoDispatch: autoDispatchConfig,
       git: gitConfig,

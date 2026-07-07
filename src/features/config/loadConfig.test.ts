@@ -20,3 +20,21 @@ test('loadConfig deep-merges a partial git override with the base config', async
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+// A repo picking only agent.model must inherit the default modelArgs — that
+// pair is what delivers the model to the CLI. A shallow merge
+// (`override.agent ?? base.agent`) would drop modelArgs (and command/args),
+// making buildAgentArgs reject the config downstream.
+test('loadConfig keeps default agent.modelArgs when only agent.model is overridden', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'fixbot-config-'));
+  try {
+    await writeFile(join(cwd, '.fixbot.json'), JSON.stringify({ agent: { model: 'claude-fable-5' } }));
+    const config = await loadConfig(cwd);
+    assert.strictEqual(config.agent.model, 'claude-fable-5');
+    assert.deepStrictEqual(config.agent.modelArgs, ['--model', '{model}'], 'default modelArgs must survive the merge');
+    assert.strictEqual(config.agent.command, defaultConfig.agent.command);
+    assert.deepStrictEqual(config.agent.args, defaultConfig.agent.args);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});

@@ -68,7 +68,7 @@ cp .fixbot.example.json .fixbot.json
 
 - `botName` — the bot account's GitHub login. This is the mention name (`@<botName> fix`) and how the bot recognizes its own PRs. Pass the same value as `--bot` when running `daemon`.
 - `git.authorName` / `git.authorEmail` — the commit identity on published fixes.
-- `agent` — the coding agent command; default `omp -p @{prompt}`. Point `command`/`args` at any CLI agent; `{prompt}` is replaced with the rendered prompt file path.
+- `agent` — the coding agent command; default `omp -p @{prompt}`. Point `command`/`args` at any CLI agent; `{prompt}` is replaced with the rendered prompt file path. Set `agent.model` to pin the model; it is passed via `agent.modelArgs` (default `--model {model}`, matching `omp`/`pi`) — change `modelArgs` to whatever flag your agent CLI expects, or put `{model}` directly in `args`.
 
 ### 5. Dry-run against a real issue
 
@@ -125,7 +125,7 @@ Commenting on an issue or PR with a mention of the configured bot name dispatche
 
 Optional `.fixbot.json` in the working directory; every field has a default. See [`.fixbot.example.json`](.fixbot.example.json) for the full shape. Highlights:
 
-- `agent` — the coding agent command; default `omp -p @{prompt}`. Point `command`/`args` at `pi` or any CLI agent.
+- `agent` — the coding agent command; default `omp -p @{prompt}`. Point `command`/`args` at `pi` or any CLI agent. Optional `model` selects the model; `modelArgs` (default `["--model", "{model}"]`) controls how the chosen agent receives it, so keep it in sync with that agent's CLI.
 - `autoLabel` — keyword rules applied to newly polled issues.
 - `autoDispatch` — automatically start `triage`/`reproduce`/`fix` on new issues (off by default, rate-limited by `maxPerPoll`, gated by `requireLabels`/`skipWhenLabels`).
 - `policy` — the safety profile: `allowPush` (default `false`), `maxChangedFiles`, `maxDiffLines`, `blockedPaths`, `allowedCommands`, evidence requirements, and per-outcome status labels.
