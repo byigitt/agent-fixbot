@@ -33,14 +33,15 @@ Everything runs on the machine hosting the bot. The target repository needs no w
 
 ### 1. Install prerequisites
 
-You need `node` (v22+), `pnpm`, `git`, the `gh` CLI, and a coding agent CLI (`omp` by default — any CLI agent that accepts a prompt file works, see step 4).
+You need `node` (v22+), `pnpm`, `git`, the `gh` CLI, and a coding agent CLI (`omp` by default — any CLI agent that accepts a prompt file works, see step 4). On a fresh host (VPS or Mac Mini), `scripts/install-tools.sh` installs all of them — macOS via Homebrew, Debian/Ubuntu via apt; pass `--skip-agent` if you use a different agent CLI:
 
 ```bash
 git clone https://github.com/byigitt/agent-fixbot
 cd agent-fixbot
+./scripts/install-tools.sh   # installs node/pnpm/git/gh and omp; idempotent
 pnpm install
 pnpm build
-node dist/cli.js doctor   # verifies node/pnpm/git/gh are on PATH
+node dist/cli.js doctor      # verifies node/pnpm/git/gh are on PATH
 ```
 
 Note: `doctor` does not check the agent CLI or `gh` auth — steps 3 and 4 cover those.
