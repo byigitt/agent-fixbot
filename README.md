@@ -27,34 +27,67 @@ guards: diff size, blocked paths, allowed commands, evidence ──► PR / comm
 
 Each mode is two-gated: the agent first triages the issue against the code; it either stops with a findings-only comment (no diff, so no PR) or ships a complete fix with a regression test.
 
-## Requirements
+## Setup
 
-`node`, `pnpm`, `git`, and an authenticated `gh` CLI — verify with:
+Everything runs on the machine hosting the bot. The target repository needs no workflow files, app installation, or config — all state (config, workspaces, poll cursors) lives in this checkout.
+
+### 1. Install prerequisites
+
+You need `node` (v22+), `pnpm`, `git`, the `gh` CLI, and a coding agent CLI (`omp` by default — any CLI agent that accepts a prompt file works, see step 4).
 
 ```bash
+git clone https://github.com/byigitt/agent-fixbot
+cd agent-fixbot
 pnpm install
 pnpm build
-node dist/cli.js doctor
+node dist/cli.js doctor   # verifies node/pnpm/git/gh are on PATH
 ```
 
-Log the `gh` CLI into the bot account (see [docs/roboomp-operations.md](docs/roboomp-operations.md) for the full machine-user setup):
+Note: `doctor` does not check the agent CLI or `gh` auth — steps 3 and 4 cover those.
+
+### 2. Create the bot account and grant it access
+
+Use a dedicated GitHub **machine user** — a normal account, not a GitHub App. Give it **write access** to every repository it should operate on (repo → Settings → Collaborators): the bot pushes fix branches directly to `origin` and opens PRs from them (`src/features/publisher/publisher.ts`); there is no fork flow. See [docs/roboomp-operations.md](docs/roboomp-operations.md) for the full machine-user rationale.
+
+### 3. Authenticate `gh` as the bot
 
 ```bash
+export GH_CONFIG_DIR=~/.config/gh-fixbot   # keeps your personal gh login untouched
 gh auth login --hostname github.com --git-protocol ssh --web --scopes repo
 ```
 
-## Quick start
+Run every fixbot command with the same `GH_CONFIG_DIR` set. All GitHub reads and mutations go through this `gh` login; the agent process itself never sees a token.
+
+### 4. Configure
 
 ```bash
-# keep polling issues and comments for a repo until Ctrl+C
-pnpm dev -- owner/repo --bot fixbot
+cp .fixbot.example.json .fixbot.json
+```
 
-# or run individual commands against the built CLI
+`.fixbot.json` is read from the directory you run the CLI in — this checkout, not the target repo (`src/features/config/loadConfig.ts`). Every field has a default; set these first:
+
+- `botName` — the bot account's GitHub login. This is the mention name (`@<botName> fix`) and how the bot recognizes its own PRs. Pass the same value as `--bot` when running `daemon`.
+- `git.authorName` / `git.authorEmail` — the commit identity on published fixes.
+- `agent` — the coding agent command; default `omp -p @{prompt}`. Point `command`/`args` at any CLI agent; `{prompt}` is replaced with the rendered prompt file path.
+
+### 5. Dry-run against a real issue
+
+```bash
 node dist/cli.js triage owner/repo#123 --dry-run
 node dist/cli.js fix owner/repo#123 --dry-run
 ```
 
-`--dry-run` runs the full pipeline but publishes nothing. Real pushes additionally require `policy.allowPush: true` in `.fixbot.json` — the default is `false`.
+`--dry-run` runs the full pipeline — clone into `.workspaces/<owner>-<repo>`, render the prompt, run the agent, evaluate the guards — but publishes nothing. Inspect the agent's output under `.workspaces/<owner>-<repo>/.fixbot/`.
+
+### 6. Go live
+
+Set `policy.allowPush: true` in `.fixbot.json` (the default `false` keeps every run a dry run against GitHub), then start the polling daemon:
+
+```bash
+node dist/cli.js daemon owner/repo --bot <botName>
+```
+
+It polls comments every 60s and issues every 180s until Ctrl+C (tune with `--comments-interval` / `--issues-interval`). Commenting `@<botName> fix` on an issue now dispatches the bot.
 
 ## Commands
 
